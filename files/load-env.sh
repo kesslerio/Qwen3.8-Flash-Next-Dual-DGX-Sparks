@@ -8,5 +8,5 @@ if [[ -n "${QWEN_PROFILE:-}" ]]; then
     fi
     source "$SCRIPT_DIR/deploy/profiles/nvfp4-common.env" || return 1
     source "$SCRIPT_DIR/deploy/profiles/$QWEN_PROFILE.env" || return 1
-    case "${QWEN_MTP_TOKENS:-3}" in 0|1|3) MTP_NUM_SPECULATIVE_TOKENS="${QWEN_MTP_TOKENS:-3}" ;; *) echo "MTP comparison supports 0, 1, or 3" >&2; return 1 ;; esac
+    case "${QWEN_MTP_TOKENS:-3}" in 0|1|2|3) MTP_NUM_SPECULATIVE_TOKENS="${QWEN_MTP_TOKENS:-3}" ;; *) echo "MTP comparison supports 0, 1, 2, or 3" >&2; return 1 ;; esac
 fi

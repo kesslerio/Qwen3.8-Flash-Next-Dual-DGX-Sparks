@@ -28,5 +28,10 @@ class ProfilesTest(unittest.TestCase):
         self.assertEqual(result.stdout, "RadixArk/Qwen3.8-Flash-Next-NVFP4 262144 false 0")
         self.assertNotEqual(self.load("nvfp4-native", {"QWEN_MTP_TOKENS": "-1"}).returncode, 0)
 
+    def test_long_profile_accepts_mtp2(self):
+        result = self.load("nvfp4-long", {"QWEN_MTP_TOKENS": "2"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "RadixArk/Qwen3.8-Flash-Next-NVFP4 1000000 false 2")
+
     def test_unknown_profile_fails(self):
         self.assertNotEqual(self.load("missing").returncode, 0)
