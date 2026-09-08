@@ -7,6 +7,12 @@ spec=importlib.util.spec_from_file_location('history',Path(__file__).resolve().p
 m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 
 class HistoryTests(unittest.TestCase):
+    def test_normal_stream_close_is_not_an_interruption(self):
+        self.assertFalse(m.interrupted({'disconnected': True, 'finish_reasons': ['stop']}))
+        self.assertFalse(m.interrupted({'disconnected': True, 'finish_reasons': ['tool_calls']}))
+        self.assertTrue(m.interrupted({'disconnected': True, 'finish_reasons': []}))
+        self.assertTrue(m.interrupted({'interrupted': True, 'finish_reasons': ['stop']}))
+
     def test_restart_overlap_retention_and_field_allowlist(self):
         with tempfile.TemporaryDirectory() as directory:
             db=m.connect(Path(directory)/'history.sqlite3')

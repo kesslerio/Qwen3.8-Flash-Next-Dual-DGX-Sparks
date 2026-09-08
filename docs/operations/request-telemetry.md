@@ -47,3 +47,8 @@ container-local directory. A reload that reused persisted choices failed in
 CUTLASS initialization during CUDA graph capture after a successful cold-tuned
 run. Each new container retunes instead; compiled kernel files remain cached.
 This adds startup tuning time and is a mitigation, not a confirmed upstream fix.
+
+A raw ASGI `disconnected` flag can follow a successful stream. The report counts
+it as interrupted only when no terminal finish reason was observed; explicit
+application exceptions still count. This is an inference about stream completion,
+not an acknowledgement that the client displayed the answer.

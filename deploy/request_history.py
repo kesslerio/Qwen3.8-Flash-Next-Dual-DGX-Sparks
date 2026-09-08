@@ -41,6 +41,14 @@ def ingest(db, text, now):
     return count
 
 
+def interrupted(row):
+    # ASGI can report http.disconnect after a successful streaming response.
+    # Preserve raw disconnect evidence, but do not count terminal responses as
+    # interrupted solely because the client closed its connection.
+    return bool(row.get('interrupted') or
+                (row.get('disconnected') and not row.get('finish_reasons')))
+
+
 def connect(path):
     path.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
     db = sqlite3.connect(path)
@@ -68,7 +76,7 @@ def main():
         report={'hours':args.report_hours,'finished_records':len(rows),'unfinished_records':missing,'clients':{}}
         for client in sorted({row.get('client','unknown') for row in rows}):
             group=[row for row in rows if row.get('client','unknown')==client]
-            entry={'requests':len(group),'interrupted':sum(bool(r.get('interrupted') or r.get('disconnected')) for r in group)}
+            entry={'requests':len(group),'interrupted':sum(interrupted(r) for r in group)}
             for key in ('prompt_tokens','completion_tokens','cached_tokens','queue_time_ms','first_progress_ms','tokens_per_second','decode_tokens_per_second','end_to_end_tokens_per_second'):
                 values=[r[key] for r in group if type(r.get(key)) in (float,int)]
                 entry[key]={'samples':len(values),'median':statistics.median(values) if values else None}
