@@ -137,7 +137,7 @@ def supervise():
         raise ValueError("Invalid worker address")
     port = int(port)
     try:
-        # Three attempts over this supervisor lifetime; systemd must not retry forever.
+        # Three attempts per run; systemd applies a longer cooldown after exhaustion.
         for attempt in range(1, 4):
             if STOP.is_set():
                 return 0
