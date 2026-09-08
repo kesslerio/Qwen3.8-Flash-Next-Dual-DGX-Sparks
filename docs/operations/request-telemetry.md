@@ -41,3 +41,9 @@ observed by the API middleware. Native `tokens_per_second` includes prefill but
 excludes queue time. `decode_tokens_per_second` is the reciprocal of mean
 inter-token latency; `end_to_end_tokens_per_second` includes the entire observed
 request. Compare like metrics rather than treating all three as decode speed.
+
+For the pinned prefix-cache profile, FlashInfer tuning choices use a
+container-local directory. A reload that reused persisted choices failed in
+CUTLASS initialization during CUDA graph capture after a successful cold-tuned
+run. Each new container retunes instead; compiled kernel files remain cached.
+This adds startup tuning time and is a mitigation, not a confirmed upstream fix.

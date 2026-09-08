@@ -457,6 +457,9 @@ fi
 # Qwen's upstream dict overrides do not reach the MTP draft. Extended
 # context needs matching rotary scaling and maximum length on both models.
 if $DO_LAUNCH && [[ "${QWEN_PREFIX_CACHE:-false}" == "true" ]]; then
+    # Cached MoE tactics failed during graph capture in a fresh process on GB10.
+    # Retune per container; compiled kernels remain in the persistent cache.
+    OVERLAY_ENV+=("-e VLLM_FLASHINFER_AUTOTUNE_CACHE_DIR=/tmp/qwen-flashinfer-autotune")
     extract_from_image "$VLLM_PKG/v1/core/single_type_kv_cache_manager.py" "$SCRIPT_DIR/files/mamba_manager_patched.py.orig"
     extract_from_image "$VLLM_PKG/v1/worker/gpu/model_states/mamba_hybrid.py" "$SCRIPT_DIR/files/mamba_hybrid_patched.py.orig"
     python3 "$SCRIPT_DIR/files/patch_mamba_prefix.py"
