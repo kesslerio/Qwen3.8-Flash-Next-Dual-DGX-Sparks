@@ -4,7 +4,7 @@ The canonical checkout is `/home/kesslerio/Qwen3.8-Flash-Next-Dual-DGX-Sparks` o
 
 ## Profiles and immutable inputs
 
-Use `QWEN_PROFILE=nvfp4-native` for qualification (262144 context, six active sequences), and `QWEN_PROFILE=nvfp4-long` for the final context-first service (500000 context, three active sequences, YaRN factor 2). Profiles override stale values in `.env` and reject the FP8 wrapper overrides. `QWEN_MTP_TOKENS=0|1|3` selects a controlled comparison; 0 is never the delivered default. The three-session admission cap is configured, but three simultaneous near-limit requests remain unqualified.
+Use `QWEN_PROFILE=nvfp4-native` for qualification (262144 context, six active sequences), and `QWEN_PROFILE=nvfp4-long` for the final context-first service (500000 context, three active sequences, YaRN factor 2). Profiles override stale values in `.env` and reject the FP8 wrapper overrides. `QWEN_MTP_TOKENS=0|1|3` selects a controlled comparison; 0 is never the delivered default. The three-session admission cap is configured; three simultaneous near-limit requests remain unqualified.
 
 `deploy/profiles/nvfp4-manifest.json` pins the checkpoint revision and source sizes/LFS hashes. The common profile pins the image registry digest. Before launch, the entire inventory must exist at that exact snapshot. Preserve the original FP8 image, snapshot, private environment, launcher and overlay files as a rollback bundle. Private data belongs outside Git.
 
@@ -28,4 +28,33 @@ The implementation plan requires final-profile >=3000000 measured shared KV toke
 
 ## Delivered state
 
-The 500K profile passed a 479986-input-token semantic check and real DSH tool cycles on all three client hosts. The supervisor is active but boot enablement, recovery/rollback drills, concurrent near-limit qualification, and the mixed-workload soak remain outstanding. Hermes resumed after benchmark traffic ended. See the [qualification report](../benchmarks/john-ofus-nvfp4.md) for measured native-context speed and current-profile limits.
+The 500K profile passed a 479986-input-token semantic check and real DSH tool cycles on all three client hosts. Boot startup and delayed failure retries are configured. A controlled rollback returned a correct response; reboot and failure-injection drills, simultaneous near-limit qualification, and the mixed-workload soak remain outstanding. Hermes resumed after benchmark traffic ended. See the [qualification report](../benchmarks/john-ofus-nvfp4.md) for measured native-context speed and current-profile limits.
+
+## Conversational prefill and cache reuse
+
+The long profile preserves 8192-token prefill batches and uses patched Mamba `align`
+prefix caching. Both fixes in `files/patch_mamba_prefix.py` are required:
+exclude MTP-contaminated cache tails in both lookup paths, and resume recurrent
+state using the Mamba group's block size. The launcher regenerates both overlays
+from the pinned image and applies them to both ranks. Changed anchors fail
+before launch. Do not enable caching by adding a bare CLI flag to an unpatched
+image.
+
+Use `bench/prefix_conversation.py --out <private-result.json>` to check varied
+prefix lengths, older planted values, and concurrent branches. Identical prompt
+replays alone cannot validate recurrent-state correctness. The diagnostic native
+profile retains caching off for comparison.
+
+Stop and disable the retired service explicitly; disabling alone does not stop
+an already-running `Restart=` loop:
+
+```sh
+sudo systemctl stop deepseek-vllm.service
+sudo systemctl disable deepseek-vllm.service
+```
+
+See [request history](request-telemetry.md) for retained per-client latency,
+cache, interruption and tool-presence metadata. Use these records alongside
+SparkDash's aggregate history to assess real traffic.
+
+See the [real-workload latency report](../benchmarks/real-workload-20260908.md) for cache acceptance and the distinction between decode speed and conversation latency.
