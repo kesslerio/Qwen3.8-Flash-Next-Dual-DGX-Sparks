@@ -23,12 +23,13 @@ This fork also includes an opt-in, pinned two-node deployment. Set
 `nvfp4-native` profile uses 262,144 tokens. Selected profiles override `.env`
 model settings; the original launch behavior remains available without a profile.
 
-See [operations](docs/operations/john-ofus.md) for supervisor ownership and
-rollback, and the [qualification report](docs/benchmarks/john-ofus-nvfp4.md)
-for measured results and remaining operational checks. The 500K deployment
-passed a near-480K semantic check; three simultaneous near-limit requests
-remain unqualified. Do not interpret native-profile decode measurements as
-500K-profile benchmarks.
+The long profile permits 1,000,000 total tokens with matching YaRN factor 4
+on target and MTP draft. Client-specific limits belong in client configuration.
+Host lifecycle and qualification records live in
+[spark-john-ofus-management](https://github.com/kesslerio/spark-john-ofus-management).
+Optional request telemetry is supplied by
+[sparkDash](https://github.com/kesslerio/sparkDash/tree/main/scripts/llm-request-telemetry)
+through `VLLM_REQUEST_TELEMETRY_PATH`.
 
 ## Prerequisites
 
