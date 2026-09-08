@@ -1,11 +1,10 @@
 """ASGI request metadata only: never persist prompts, outputs, headers or keys."""
 import hashlib
 import json
-import logging
+import sys
 import time
 import uuid
 
-LOG = logging.getLogger('qwen.request_telemetry')
 BODY_LIMIT = 8 * 1024 * 1024
 EVENT_LIMIT = 1024 * 1024
 TIMINGS = ('time_to_first_token_ms', 'generation_time_ms', 'queue_time_ms',
@@ -14,6 +13,12 @@ TIMINGS = ('time_to_first_token_ms', 'generation_time_ms', 'queue_time_ms',
 
 def number(value):
     return value if type(value) in (int, float) and 0 <= value < 1e15 else None
+
+
+def emit(marker, record):
+    # Server logging configuration can suppress unrelated named loggers.
+    # Emit only this observer's allowlisted metadata to the rotated container log.
+    print(marker, json.dumps(record, separators=(',', ':')), file=sys.stderr, flush=True)
 
 
 class RequestTelemetry:
@@ -118,7 +123,7 @@ class RequestTelemetry:
                     record['response_metadata_omitted'] = True
             await send(message)
 
-        LOG.warning('QWEN_REQUEST_START %s', json.dumps(record, separators=(',', ':')))
+        emit('QWEN_REQUEST_START', record)
         try:
             await self.app(scope, observed_receive, observed_send)
         except BaseException:
@@ -133,5 +138,9 @@ class RequestTelemetry:
             if usage is not None:
                 for key in ('prompt_tokens', 'completion_tokens'):
                     record[key] = number(getattr(usage, key, None))
-            # The inference server's configured Docker log rotation owns retention.
-            LOG.warning('QWEN_REQUEST %s', json.dumps(record, separators=(',', ':')))
+            itl = record.get('mean_itl_ms')
+            record['decode_tokens_per_second'] = 1000 / itl if itl else None
+            count = record.get('completion_tokens')
+            elapsed = record['elapsed_ms']
+            record['end_to_end_tokens_per_second'] = count * 1000 / elapsed if count is not None and elapsed else None
+            emit('QWEN_REQUEST', record)

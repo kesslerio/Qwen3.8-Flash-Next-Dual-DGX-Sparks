@@ -1,7 +1,7 @@
 # Request performance history
 
 `QWEN_REQUEST_TELEMETRY=true` loads a bounded ASGI observer and enables vLLM's
-per-request timing fields and final usage chunks. The observer forwards requests
+per-request timing fields, cached-token details and final usage chunks. The observer forwards requests
 and responses unchanged. It records token counts, cache reuse when supplied by
 vLLM, queue time, first progress, generation rate, reasoning settings, tool-call
 presence, completion status and interruptions. A client address is represented
@@ -34,3 +34,10 @@ Absent metrics remain unknown, not zero. History starts when instrumentation
 was deployed; it cannot retrospectively attribute old aggregate counters.
 This complements SparkDash's seven-day aggregate history. Avoid interpreting
 process-lifetime latency percentiles as percentiles for the last hour.
+
+Timing definitions follow the pinned vLLM source: `time_to_first_token_ms` starts
+at scheduling and excludes queue time; `first_progress_ms` includes the wait
+observed by the API middleware. Native `tokens_per_second` includes prefill but
+excludes queue time. `decode_tokens_per_second` is the reciprocal of mean
+inter-token latency; `end_to_end_tokens_per_second` includes the entire observed
+request. Compare like metrics rather than treating all three as decode speed.

@@ -629,7 +629,7 @@ if $DO_LAUNCH; then
     VLLM_ARGS+=("--served-model-name" "$SERVED_MODEL_NAME")
     if [[ "${QWEN_REQUEST_TELEMETRY:-false}" == "true" ]]; then
         VLLM_ARGS+=("--middleware" "qwen_request_telemetry.RequestTelemetry")
-        VLLM_ARGS+=("--enable-per-request-metrics" "--enable-force-include-usage")
+        VLLM_ARGS+=("--enable-per-request-metrics" "--enable-force-include-usage" "--enable-prompt-tokens-details")
     fi
     VLLM_ARGS+=("--tensor-parallel-size" "$TENSOR_PARALLEL_SIZE")
     VLLM_ARGS+=("--gpu-memory-utilization" "$GPU_MEMORY_UTILIZATION")

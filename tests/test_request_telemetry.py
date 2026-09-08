@@ -1,6 +1,9 @@
 import asyncio
 import importlib.util
 import json
+import contextlib
+import io
+import logging
 from pathlib import Path
 import unittest
 from unittest.mock import patch
@@ -27,7 +30,7 @@ class TelemetryTests(unittest.IsolatedAsyncioTestCase):
         async def send(message):
             sent.append(message)
         scope = {'type': 'http', 'path': '/v1/chat/completions', 'client': ('192.0.2.1', 1)}
-        with patch.object(m.LOG, 'warning', side_effect=lambda fmt, value: logs.append(json.loads(value))):
+        with patch.object(m, 'emit', side_effect=lambda marker, value: logs.append(dict(value))):
             if error:
                 with self.assertRaises(asyncio.CancelledError):
                     await m.RequestTelemetry(app)(scope, receive, send)
@@ -37,10 +40,12 @@ class TelemetryTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_stream_passthrough_and_metadata_without_content(self):
         payload = {'messages': [{'content': 'PRIVATE_PROMPT'}], 'max_tokens': 64, 'chat_template_kwargs': {'enable_thinking': True}}
-        chunks = [b'data: {"choices":[{"delta":{"content":"PRIVATE_OUTPUT"}}]}\n', b'\ndata: {"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":10},"metrics":{"queue_time_ms":12}}\n\ndata: [DONE]\n\n']
+        chunks = [b'data: {"choices":[{"delta":{"content":"PRIVATE_OUTPUT"}}]}\n', b'\ndata: {"choices":[],"usage":{"prompt_tokens":40,"completion_tokens":10},"metrics":{"queue_time_ms":12,"mean_itl_ms":25}}\n\ndata: [DONE]\n\n']
         sent, row = await self.exercise(json.dumps(payload).encode(), chunks)
         self.assertEqual([x['body'] for x in sent if x['type']=='http.response.body'], chunks+[b''])
         self.assertEqual(row['queue_time_ms'], 12)
+        self.assertEqual(row['decode_tokens_per_second'], 40)
+        self.assertIsNotNone(row['end_to_end_tokens_per_second'])
         self.assertEqual(row['prompt_tokens'], 40)
         self.assertTrue(row['thinking'])
         self.assertNotIn('PRIVATE', json.dumps(row))
@@ -63,3 +68,14 @@ class TelemetryTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(row['tool_call'])
         self.assertEqual(row['finish_reasons'], ['tool_calls'])
         self.assertEqual(row['completion_tokens'], 5)
+
+    def test_emission_survives_disabled_named_loggers(self):
+        output = io.StringIO()
+        previous = logging.root.manager.disable
+        try:
+            logging.disable(logging.CRITICAL)
+            with contextlib.redirect_stderr(output):
+                m.emit('QWEN_REQUEST', {'completion_tokens': 7})
+        finally:
+            logging.disable(previous)
+        self.assertEqual(output.getvalue(), 'QWEN_REQUEST {"completion_tokens":7}\n')

@@ -12,7 +12,7 @@ import time
 FIELDS = {'event','id','started_at','client','status','max_tokens','thinking',
           'reasoning_effort','prompt_tokens','completion_tokens','cached_tokens',
           'time_to_first_token_ms','generation_time_ms','queue_time_ms','mean_itl_ms',
-          'tokens_per_second','elapsed_ms','first_progress_ms','finish_reasons',
+          'tokens_per_second','decode_tokens_per_second','end_to_end_tokens_per_second','elapsed_ms','first_progress_ms','finish_reasons',
           'tool_call','stream_error','interrupted','disconnected',
           'request_metadata_omitted','response_metadata_omitted'}
 RETENTION = 7 * 86400
@@ -69,7 +69,7 @@ def main():
         for client in sorted({row.get('client','unknown') for row in rows}):
             group=[row for row in rows if row.get('client','unknown')==client]
             entry={'requests':len(group),'interrupted':sum(bool(r.get('interrupted') or r.get('disconnected')) for r in group)}
-            for key in ('prompt_tokens','completion_tokens','cached_tokens','queue_time_ms','first_progress_ms','tokens_per_second'):
+            for key in ('prompt_tokens','completion_tokens','cached_tokens','queue_time_ms','first_progress_ms','tokens_per_second','decode_tokens_per_second','end_to_end_tokens_per_second'):
                 values=[r[key] for r in group if type(r.get(key)) in (float,int)]
                 entry[key]={'samples':len(values),'median':statistics.median(values) if values else None}
             report['clients'][client]=entry
