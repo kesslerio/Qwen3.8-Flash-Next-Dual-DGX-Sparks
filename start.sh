@@ -456,6 +456,17 @@ fi
 
 # Qwen's upstream dict overrides do not reach the MTP draft. Extended
 # context needs matching rotary scaling and maximum length on both models.
+if $DO_LAUNCH && [[ "${QWEN_PREFIX_CACHE:-false}" == "true" ]]; then
+    extract_from_image "$VLLM_PKG/v1/core/single_type_kv_cache_manager.py" "$SCRIPT_DIR/files/mamba_manager_patched.py.orig"
+    extract_from_image "$VLLM_PKG/v1/worker/gpu/model_states/mamba_hybrid.py" "$SCRIPT_DIR/files/mamba_hybrid_patched.py.orig"
+    python3 "$SCRIPT_DIR/files/patch_mamba_prefix.py"
+    add_overlay "$SCRIPT_DIR/files/mamba_manager_patched.py" "$VLLM_PKG/v1/core/single_type_kv_cache_manager.py"
+    add_overlay "$SCRIPT_DIR/files/mamba_hybrid_patched.py" "$VLLM_PKG/v1/worker/gpu/model_states/mamba_hybrid.py"
+fi
+if $DO_LAUNCH && [[ "${QWEN_REQUEST_TELEMETRY:-false}" == "true" ]]; then
+    add_overlay "$SCRIPT_DIR/deploy/request_telemetry.py" "/usr/local/lib/python3.12/dist-packages/qwen_request_telemetry.py"
+fi
+
 if $DO_LAUNCH && [[ "$YARN_ENABLE" == "true" && "$MTP_NUM_SPECULATIVE_TOKENS" -gt 0 ]]; then
     extract_from_image "$VLLM_PKG/config/speculative.py" \
                        "$SCRIPT_DIR/files/speculative_yarn_patched.py.orig"
@@ -616,6 +627,10 @@ if $DO_LAUNCH; then
         VLLM_ARGS+=("--tokenizer-revision" "$MODEL_REVISION")
     fi
     VLLM_ARGS+=("--served-model-name" "$SERVED_MODEL_NAME")
+    if [[ "${QWEN_REQUEST_TELEMETRY:-false}" == "true" ]]; then
+        VLLM_ARGS+=("--middleware" "qwen_request_telemetry.RequestTelemetry")
+        VLLM_ARGS+=("--enable-per-request-metrics" "--enable-force-include-usage")
+    fi
     VLLM_ARGS+=("--tensor-parallel-size" "$TENSOR_PARALLEL_SIZE")
     VLLM_ARGS+=("--gpu-memory-utilization" "$GPU_MEMORY_UTILIZATION")
     VLLM_ARGS+=("--max-num-seqs" "$MAX_NUM_SEQS")
@@ -820,6 +835,7 @@ print(json.dumps({"text_config": tc}, separators=(",", ":")) if tc else "")
 docker run \
     -d --name vllm-fn \
     --gpus all --network host --ipc host \
+    --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
     --cap-add SYS_NICE --ulimit memlock=-1 --ulimit stack=67108864 \
     --device /dev/infiniband:/dev/infiniband \
     -e GLOO_SOCKET_IFNAME=$WORKER_IFACE \
@@ -870,6 +886,7 @@ LAUNCH_EOF
 docker run \
     -d --name vllm-fn \
     --gpus all --network host --ipc host \
+    --log-driver json-file --log-opt max-size=20m --log-opt max-file=5 \
     --cap-add SYS_NICE --ulimit memlock=-1 --ulimit stack=67108864 \
     --device /dev/infiniband:/dev/infiniband \
     -e GLOO_SOCKET_IFNAME=$IFACE \
