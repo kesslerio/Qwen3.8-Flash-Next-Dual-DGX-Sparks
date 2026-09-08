@@ -28,7 +28,7 @@ The implementation plan requires final-profile >=3000000 measured shared KV toke
 
 ## Delivered state
 
-The 500K profile passed a 479986-input-token semantic check and real DSH tool cycles on all three client hosts. The supervisor is active but boot enablement, recovery/rollback drills, concurrent near-limit qualification, and the mixed-workload soak remain outstanding. Hermes resumed after benchmark traffic ended. See the [qualification report](../benchmarks/john-ofus-nvfp4.md) for measured native-context speed and current-profile limits.
+The 500K profile passed a 479986-input-token semantic check and real DSH tool cycles on all three client hosts. Boot startup and delayed failure retries are configured. A controlled rollback returned a correct response; reboot and failure-injection drills, simultaneous near-limit qualification, and the mixed-workload soak remain outstanding. Hermes resumed after benchmark traffic ended. See the [qualification report](../benchmarks/john-ofus-nvfp4.md) for measured native-context speed and current-profile limits.
 
 ## Conversational prefill and cache reuse
 
@@ -56,3 +56,5 @@ sudo systemctl disable deepseek-vllm.service
 See [request history](request-telemetry.md) for retained per-client latency,
 cache, interruption and tool-presence metadata. Use these records alongside
 SparkDash's aggregate history to assess real traffic.
+
+See the [real-workload latency report](../benchmarks/real-workload-20260908.md) for cache acceptance and the distinction between decode speed and conversation latency.
