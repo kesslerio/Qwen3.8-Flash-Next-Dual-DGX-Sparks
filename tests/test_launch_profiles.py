@@ -18,7 +18,7 @@ class ProfilesTest(unittest.TestCase):
     def test_long_profile_overrides_stale_fp8(self):
         result = self.load("nvfp4-long")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "RadixArk/Qwen3.8-Flash-Next-NVFP4 500000 false 3")
+        self.assertEqual(result.stdout, "RadixArk/Qwen3.8-Flash-Next-NVFP4 1000000 false 3")
 
     def test_wrapper_cannot_override_selected_profile(self):
         self.assertNotEqual(self.load("nvfp4-long", {"OVERRIDE_MODEL_ID": "fp8"}).returncode, 0)

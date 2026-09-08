@@ -466,8 +466,8 @@ if $DO_LAUNCH && [[ "${QWEN_PREFIX_CACHE:-false}" == "true" ]]; then
     add_overlay "$SCRIPT_DIR/files/mamba_manager_patched.py" "$VLLM_PKG/v1/core/single_type_kv_cache_manager.py"
     add_overlay "$SCRIPT_DIR/files/mamba_hybrid_patched.py" "$VLLM_PKG/v1/worker/gpu/model_states/mamba_hybrid.py"
 fi
-if $DO_LAUNCH && [[ "${QWEN_REQUEST_TELEMETRY:-false}" == "true" ]]; then
-    add_overlay "$SCRIPT_DIR/deploy/request_telemetry.py" "/usr/local/lib/python3.12/dist-packages/qwen_request_telemetry.py"
+if $DO_LAUNCH && [[ -n "${VLLM_REQUEST_TELEMETRY_PATH:-}" ]]; then
+    add_overlay "$VLLM_REQUEST_TELEMETRY_PATH" "/usr/local/lib/python3.12/dist-packages/llm_request_telemetry.py"
 fi
 
 if $DO_LAUNCH && [[ "$YARN_ENABLE" == "true" && "$MTP_NUM_SPECULATIVE_TOKENS" -gt 0 ]]; then
@@ -630,8 +630,8 @@ if $DO_LAUNCH; then
         VLLM_ARGS+=("--tokenizer-revision" "$MODEL_REVISION")
     fi
     VLLM_ARGS+=("--served-model-name" "$SERVED_MODEL_NAME")
-    if [[ "${QWEN_REQUEST_TELEMETRY:-false}" == "true" ]]; then
-        VLLM_ARGS+=("--middleware" "qwen_request_telemetry.RequestTelemetry")
+    if [[ -n "${VLLM_REQUEST_TELEMETRY_PATH:-}" ]]; then
+        VLLM_ARGS+=("--middleware" "llm_request_telemetry.RequestTelemetry")
         VLLM_ARGS+=("--enable-per-request-metrics" "--enable-force-include-usage" "--enable-prompt-tokens-details")
     fi
     VLLM_ARGS+=("--tensor-parallel-size" "$TENSOR_PARALLEL_SIZE")
