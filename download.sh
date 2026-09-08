@@ -19,13 +19,13 @@ info()  { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
 ok()    { echo -e "\033[1;32m[ OK ]\033[0m  $*"; }
 err()   { echo -e "\033[1;31m[ERR ]\033[0m  $*"; exit 1; }
 
-if [[ ! -f .env ]]; then
+if [[ ! -f "${QWEN_ENV_FILE:-$SCRIPT_DIR/.env}" ]]; then
     echo "ERROR: .env not found. Copy .env.sample to .env and edit it."
     echo "  cp .env.sample .env"
     exit 1
 fi
 # shellcheck source=.env
-source .env
+source "$SCRIPT_DIR/files/load-env.sh"
 
 HF_TOKEN="${HF_TOKEN:-}"
 [[ -n "$HF_TOKEN" ]] && export HF_TOKEN
@@ -60,19 +60,26 @@ ORG="${MODEL_ID%%/*}"
 NAME="${MODEL_ID##*/}"
 MODEL_PATH="$HUB_PATH/models--${ORG}--${NAME}"
 
+REVISION_ARGS=()
+[[ -z "${MODEL_REVISION:-}" ]] || REVISION_ARGS=(--revision "$MODEL_REVISION")
+if [[ -n "${QWEN_PROFILE:-}" ]]; then
+    python3 "$SCRIPT_DIR/deploy/release_preflight.py" \
+        "$SCRIPT_DIR/deploy/profiles/nvfp4-manifest.json" \
+        "$MODEL_PATH/snapshots/$MODEL_REVISION" --space-only
+fi
 info "Downloading $MODEL_ID"
 info "Head cache: $HF_CACHE_DIR"
 info "Worker:     not updated (NFS from head at launch)"
 
 if command -v uvx &>/dev/null; then
     info "Using uvx..."
-    HF_HOME="$HF_CACHE_DIR" uvx hf download "$MODEL_ID" --cache-dir "$HUB_PATH"
-elif command -v huggingface-cli &>/dev/null; then
-    info "Using huggingface-cli..."
-    HF_HOME="$HF_CACHE_DIR" huggingface-cli download "$MODEL_ID" --cache-dir "$HUB_PATH"
+    HF_HOME="$HF_CACHE_DIR" uvx hf download "$MODEL_ID" --cache-dir "$HUB_PATH" "${REVISION_ARGS[@]}"
 elif command -v hf &>/dev/null; then
     info "Using hf CLI..."
-    HF_HOME="$HF_CACHE_DIR" hf download "$MODEL_ID" --cache-dir "$HUB_PATH"
+    HF_HOME="$HF_CACHE_DIR" hf download "$MODEL_ID" --cache-dir "$HUB_PATH" "${REVISION_ARGS[@]}"
+elif command -v huggingface-cli &>/dev/null; then
+    info "Using legacy huggingface-cli..."
+    HF_HOME="$HF_CACHE_DIR" huggingface-cli download "$MODEL_ID" --cache-dir "$HUB_PATH" "${REVISION_ARGS[@]}"
 else
     err "No HuggingFace download tool found. Install one of:\n  pip install huggingface_hub\n  pip install uv"
 fi
