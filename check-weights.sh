@@ -8,12 +8,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [[ ! -f .env ]]; then
+if [[ ! -f "${QWEN_ENV_FILE:-$SCRIPT_DIR/.env}" ]]; then
     echo "ERROR: .env not found."
     exit 1
 fi
 
-source .env
+source "$SCRIPT_DIR/files/load-env.sh"
 
 info()  { echo -e "\033[1;34m[INFO]\033[0m  $*"; }
 ok()    { echo -e "\033[1;32m[ OK ]\033[0m  $*"; }

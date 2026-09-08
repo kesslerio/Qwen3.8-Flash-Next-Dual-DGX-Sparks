@@ -36,14 +36,14 @@ err()   { echo -e "\033[1;31m[ERR ]\033[0m  $*"; exit 1; }
 # ---------------------------------------------------------------------------
 # Load .env
 # ---------------------------------------------------------------------------
-if [[ ! -f .env ]]; then
+if [[ ! -f "${QWEN_ENV_FILE:-$SCRIPT_DIR/.env}" ]]; then
     echo "ERROR: .env not found. Copy .env.sample to .env and edit it."
     echo "  cp .env.sample .env"
     exit 1
 fi
 
 # shellcheck source=.env
-source .env
+source "$SCRIPT_DIR/files/load-env.sh"
 
 # Validate required variables
 for var in HEAD_IP WORKER_IP IFACE IB_HCA IB_GID_INDEX MODEL_ID \
@@ -235,6 +235,15 @@ fi
 # the checkpoint and feed it back via --hf-overrides below. Empty = already
 # declared, or no quantized PLE table.
 PLE_CONFIG_DIR="$MODEL_DIR"
+if [[ -n "${MODEL_REVISION:-}" ]]; then
+    [[ "$MODEL_REVISION" =~ ^[a-f0-9]{40}$ ]] || err "MODEL_REVISION must be an immutable HF commit"
+    PLE_CONFIG_DIR="$HEAD_MODEL_PATH/snapshots/$MODEL_REVISION"
+    [[ -f "$PLE_CONFIG_DIR/config.json" ]] || err "Pinned snapshot missing: $MODEL_REVISION"
+    if [[ -n "${QWEN_PROFILE:-}" ]]; then
+        python3 "$SCRIPT_DIR/deploy/release_preflight.py" \
+            "$SCRIPT_DIR/deploy/profiles/nvfp4-manifest.json" "$PLE_CONFIG_DIR"
+    fi
+fi
 if [[ ! -f "$PLE_CONFIG_DIR/config.json" ]]; then
     PLE_CONFIG_DIR=$(ls -d "$HEAD_MODEL_PATH"/snapshots/*/ 2>/dev/null | head -1)
 fi
@@ -445,6 +454,16 @@ if $DO_LAUNCH && [[ "$KV_CACHE_DTYPE" == fp8* ]]; then
     warn "FP8 KV is a quality trade on sparse attention - validate reasoning on your workload."
 fi
 
+# Qwen's upstream dict overrides do not reach the MTP draft. Extended
+# context needs matching rotary scaling and maximum length on both models.
+if $DO_LAUNCH && [[ "$YARN_ENABLE" == "true" && "$MTP_NUM_SPECULATIVE_TOKENS" -gt 0 ]]; then
+    extract_from_image "$VLLM_PKG/config/speculative.py" \
+                       "$SCRIPT_DIR/files/speculative_yarn_patched.py.orig"
+    python3 "$SCRIPT_DIR/files/patch_mtp_yarn.py"
+    add_overlay "$SCRIPT_DIR/files/speculative_yarn_patched.py" \
+                "$VLLM_PKG/config/speculative.py"
+fi
+
 # ---------------------------------------------------------------------------
 # 4d. MTP layer-index alias overlay.
 #     vLLM builds the MTP draft layer at the absolute index that continues the
@@ -592,6 +611,10 @@ if $DO_LAUNCH; then
     info "=== Step 7: Launch vLLM ==="
 
     VLLM_ARGS=()
+    if [[ -n "${MODEL_REVISION:-}" ]]; then
+        VLLM_ARGS+=("--revision" "$MODEL_REVISION")
+        VLLM_ARGS+=("--tokenizer-revision" "$MODEL_REVISION")
+    fi
     VLLM_ARGS+=("--served-model-name" "$SERVED_MODEL_NAME")
     VLLM_ARGS+=("--tensor-parallel-size" "$TENSOR_PARALLEL_SIZE")
     VLLM_ARGS+=("--gpu-memory-utilization" "$GPU_MEMORY_UTILIZATION")
@@ -900,7 +923,7 @@ LAUNCH_EOF
             err "Container vllm-fn exited unexpectedly. Check: docker logs vllm-fn"
         fi
         # Check health endpoint
-        HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/health" 2>/dev/null || echo "000")
+        HTTP_CODE=$(curl --connect-timeout 3 --max-time 10 -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT/health" 2>/dev/null || echo "000")
         if [[ "$HTTP_CODE" == "200" ]]; then
             kill $LOGPID 2>/dev/null || true
             echo ""

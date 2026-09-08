@@ -5,12 +5,12 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [[ ! -f .env ]]; then
+if [[ ! -f "${QWEN_ENV_FILE:-$SCRIPT_DIR/.env}" ]]; then
     echo "ERROR: .env not found."
     exit 1
 fi
 
-source .env
+source "$SCRIPT_DIR/files/load-env.sh"
 
 WORKER_USER="${WORKER_USER:-}"
 WORKER_IP="${WORKER_IP:?WORKER_IP not set in .env}"
@@ -38,14 +38,20 @@ done
 ssh_cmd() {
     local user_prefix=""
     [[ -n "$WORKER_USER" ]] && user_prefix="${WORKER_USER}@"
-    ssh -o StrictHostKeyChecking=no "${user_prefix}$WORKER_IP" "$@"
+    ssh -o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 -o StrictHostKeyChecking=no "${user_prefix}$WORKER_IP" "$@"
 }
 
+STOP_FAILED=0
 echo "Stopping $CONTAINER_NAME on worker ($WORKER_IP)..."
-ssh_cmd "docker rm -f $CONTAINER_NAME 2>/dev/null && echo '  Worker: stopped.' || echo '  Worker: not running.'"
+ssh_cmd "docker rm -f $CONTAINER_NAME >/dev/null 2>&1 || { remaining=\$(docker ps -a --filter name=^/$CONTAINER_NAME\$ --format '{{.Names}}') || exit 1; test -z \"\$remaining\"; }" || STOP_FAILED=1
 
 echo "Stopping $CONTAINER_NAME on head..."
-docker rm -f "$CONTAINER_NAME" 2>/dev/null && echo "  Head: stopped." || echo "  Head: not running."
+if ! docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1; then
+    if ! remaining=$(docker ps -a --filter "name=^/$CONTAINER_NAME$" --format '{{.Names}}') || [[ -n "$remaining" ]]; then
+        echo "  Head stop failed or could not be confirmed." >&2
+        STOP_FAILED=1
+    fi
+fi
 
 if $STOP_NFS; then
     echo "Stopping NFS share ($NFS_CONTAINER) on head..."
@@ -60,3 +66,4 @@ if $STOP_NFS; then
 fi
 
 echo "Done."
+exit "$STOP_FAILED"

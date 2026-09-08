@@ -89,4 +89,5 @@ def main():
         print(f"  {key:<8} {val:<14} {'FOUND' if hit else 'MISSING'}")
     print(f"RESULT: {'PASS' if ok else 'FAIL'}")
 
-main()
+if __name__ == "__main__":
+    main()

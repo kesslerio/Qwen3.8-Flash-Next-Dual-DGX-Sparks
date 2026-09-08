@@ -15,6 +15,21 @@ All numbers in **KV cache budget** and **Default runtime** below were read from 
 server (`docker logs vllm-fn`, `docker inspect vllm-fn`) — they are measurements, not estimates.
 That container runs `GPU_MEMORY_UTILIZATION=0.835`, i.e. the value `.env` / `.env.sample` ship today.
 
+## John / Ofus pinned deployment
+
+This fork also includes an opt-in, pinned two-node deployment. Set
+`QWEN_PROFILE=nvfp4-long` to use NVFP4, FP8 KV, full-vocabulary MTP3 and
+500,000 total context tokens with YaRN factor 2. The diagnostic
+`nvfp4-native` profile uses 262,144 tokens. Selected profiles override `.env`
+model settings; the original launch behavior remains available without a profile.
+
+See [operations](docs/operations/john-ofus.md) for supervisor ownership and
+rollback, and the [qualification report](docs/benchmarks/john-ofus-nvfp4.md)
+for measured results and remaining operational checks. The 500K deployment
+passed a near-480K semantic check; three simultaneous near-limit requests
+remain unqualified. Do not interpret native-profile decode measurements as
+500K-profile benchmarks.
+
 ## Prerequisites
 
 - 2 DGX Spark nodes (GB10, 128 GB unified memory, sm_121) connected via ConnectX RoCE/IB
