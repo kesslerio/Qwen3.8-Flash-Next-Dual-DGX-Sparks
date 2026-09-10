@@ -97,7 +97,7 @@ def ask(url, model, prompt, max_tokens, timeout):
         d = json.load(r)
     msg = d["choices"][0]["message"]
     content = msg.get("content") or ""
-    reasoning = msg.get("reasoning_content") or ""
+    reasoning = msg.get("reasoning") or msg.get("reasoning_content") or ""
     return content, reasoning, time.time() - t0, d.get("usage", {})
 
 
