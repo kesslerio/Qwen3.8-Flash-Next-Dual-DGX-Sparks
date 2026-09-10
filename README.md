@@ -32,16 +32,16 @@ vim .env
 # 2. Download weights onto the head
 ./download.sh
 #    ./download.sh --fp8    # official FP8 instead
+#    ABLIT=1 ./download.sh  # gated Keys house QSA L3-47 (HF_TOKEN + accept terms)
 
 # 3. Sync to worker, apply patches, launch (NVFP4)
 ./start.sh --no-download
 #    or ./start.sh       if you want start.sh to download as well
 #    or ./start.sh --nfs to share the head cache over NFS instead of rsyncing
+#    or ABLIT=1 ./start.sh --no-download
 
-#    Or serve official FP8 instead: https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8
-#    Same cluster .env; native 262K, no YaRN.
-#    API name: qwen3.8-flash-next-fp8
-./start-fp8.sh --no-download
+#    Optional — official FP8 instead of NVFP4 (see below):
+#    ./download.sh --fp8 && ./start-fp8.sh --no-download
 
 # 4. Confirm the KV cache pool that vLLM actually allocated (~11 min after launch)
 docker logs vllm-fn 2>&1 | grep -E "Available KV cache memory|GPU KV cache size"
@@ -58,10 +58,31 @@ docker logs vllm-fn 2>&1 | grep -E "Available KV cache memory|GPU KV cache size"
 | `--launch` | Skip download + sync; apply patches and launch (weights already on both nodes) |
 | `--nfs` | Distribute weights over NFS instead of rsync (see [below](#nfs-weight-sharing-optional)) |
 | `--no-nfs` | Force rsync distribution even if `NFS_SHARE=true` in `.env` |
+| `ABLIT=1` | Env/`.env` flag: serve the gated Keys house QSA L3–47 checkpoint (see [Abliterated checkpoint](#abliterated-checkpoint-ablit)) |
+
+## Official FP8 checkpoint (optional)
+
+Same two-Spark launch as `./start.sh`, but serve
+[`Qwen/Qwen3.8-Flash-Next-FP8`](https://huggingface.co/Qwen/Qwen3.8-Flash-Next-FP8)
+instead of NVFP4. Cluster IPs, TP/EP/MTP, image and ports still come from `.env`.
+Context is native 262K with YaRN off — FP8 weights leave too little KV for 1M
+on this kit. **Available KV cache is around 500k tokens**, not the 3.65M of
+the nvidia NVFP4 checkpoint with `KV_CACHE_DTYPE=fp8`.
+
+```bash
+./download.sh --fp8
+./stop.sh                          # start.sh and start-fp8.sh share vllm-fn
+./start-fp8.sh --no-download
+# API name: qwen3.8-flash-next-fp8
+```
+
+This is **not** `FP8_DENSE=true` (hybrid NVFP4 experts + FP8 dense projections)
+and **not** fp8 KV on stock NVFP4. `ABLIT=1` is ignored when `./start-fp8.sh`
+sets `OVERRIDE_MODEL_ID`.
 
 ## What Happens
 
-1. **Download** — `./download.sh` pulls `RadixArk/Qwen3.8-Flash-Next-NVFP4` to the **head** HF cache (`./download.sh --fp8` for official FP8).
+1. **Download** — `./download.sh` pulls `MODEL_ID` from `.env` (stock NVFP4) to the **head** HF cache (`./download.sh --fp8` for official FP8; `ABLIT=1 ./download.sh` for the gated Keys house checkpoint).
 2. **Distribute** — by default `rsync` copies the checkpoint into the worker's own `~/.cache/huggingface/hub` over the ConnectX link, skipped when the worker already has it. With `NFS_SHARE=true` / `--nfs` this is replaced by the [NFS share](#nfs-weight-sharing-optional).
 3. **Image sync** — ensures `vllm/vllm-openai:qwen38-flash-next` is on both nodes
 4. **PLE patch** — extracts `ple_layer.py` from the image and patches it into `files/ple_layer_patched.py` (no image rebuild; bind-mounted at runtime)
@@ -72,6 +93,14 @@ docker logs vllm-fn 2>&1 | grep -E "Available KV cache memory|GPU KV cache size"
    scripts render the same `VLLM_ARGS` array (`EXTRA_VLLM_ARGS` really is appended last now;
    `ENABLE_EXPERT_PARALLEL=false` and `MTP_NUM_SPECULATIVE_TOKENS=0` are honored). The head's
    rendered script is kept as `.last_head_launch.sh` for inspection.
+
+> **Not done for you: dropping page caches.** `start.sh` needs no root and does
+> **not** drop page caches. Do it yourself on **both** nodes before a launch —
+> it matters on GB10 unified memory (see [Gotchas](#gotchas)):
+>
+> ```bash
+> sync && echo 3 | sudo tee /proc/sys/vm/drop_caches
+> ```
 
 Both containers are named **`vllm-fn`** (head and worker); `./stop.sh` removes both.
 
@@ -130,7 +159,8 @@ every measurement in this README.
 | `IB_HCA` | `=rocep1s0f0` | `=rocep1s0f1` | NCCL IB HCA (leading `=` = exact match, one device) |
 | `WORKER_IB_HCA` | *(unset → `IB_HCA`)* | `=rocep1s0f0` | Worker-side HCA (cross-wired link) |
 | `IB_GID_INDEX` | `3` | `3` | IB GID index (3 for ConnectX + RoCE) |
-| `MODEL_ID` | `RadixArk/Qwen3.8-Flash-Next-NVFP4` | same | HuggingFace model (the snapshot in the head cache; `local-inference-lab/…` was the old name of the same weights and no longer resolves offline) |
+| `MODEL_ID` | `nvidia/Qwen3.8-Flash-Next-NVFP4` | same | HuggingFace model when `ABLIT=0` (the snapshot in the head cache) |
+| `ABLIT` | `0` | `0` | `0` = stock `MODEL_ID`. `1` = gated Keys house QSA `o_proj` L3–47 (`drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-dual-ablit-house-qsa-L3-47`). Environment wins over `.env` for this flag. See [Abliterated checkpoint](#abliterated-checkpoint-ablit) |
 | `FP8_DENSE` | `false` | `false` | `true` → serve the hybrid NVFP4+FP8-dense checkpoint with the `files/overlay` loader patches (see below) |
 | `QSA_PROFILE` | `stock` | `stock` | `gb10` or a JSON from `files/qsa_gb10/bench_qsa_kernels.py` |
 | `REQUIRE_IDLE_GPU` | `true` | `true` | abort if `nvidia-smi` shows a compute process on either node |
@@ -152,7 +182,8 @@ every measurement in this README.
 | `MASTER_PORT` | `50000` | `50000` | Distributed coordination port |
 | `NFS_SHARE` | `false` | `false` | `true` → share the head HF cache over NFS instead of rsyncing a worker copy ([details](#nfs-weight-sharing-optional)) |
 | `NFS_SERVER_IP` | *(unset → `IFACE` IPv4)* | *(unset → `10.0.22.1`)* | Head ConnectX address that exports the HF cache. Only used when `NFS_SHARE=true`. Do **not** use the `10.0.0.1` loopback alias |
-| `EXTRA_VLLM_ARGS` / `EXTRA_DOCKER_ARGS` / `HF_TOKEN` | unset | unset | Escape hatches (`EXTRA_VLLM_ARGS` is appended last) |
+| `EXTRA_VLLM_ARGS` / `EXTRA_DOCKER_ARGS` | unset | unset | Escape hatches (`EXTRA_VLLM_ARGS` is appended last) |
+| `HF_TOKEN` | unset | unset | Required for `ABLIT=1` (gated Hugging Face repo). Environment wins over `.env` |
 
 > **KV cache dtype:** the default is now **`fp8`**, which needs `files/patch_qsa_fp8_kv.py` —
 > the stock QSA kernels declare `supported_kv_cache_dtypes = ["auto", "bfloat16"]` and raise
@@ -160,10 +191,70 @@ every measurement in this README.
 > automatically whenever `KV_CACHE_DTYPE` starts with `fp8`. Set `KV_CACHE_DTYPE=auto` for bf16.
 > See [KV cache budget](#kv-cache-budget) for both measured sets.
 
+## Abliterated checkpoint (`ABLIT`)
+
+`ABLIT=0` serves stock `MODEL_ID` (nvidia NVFP4 by default). `ABLIT=1` serves the gated
+Keys checkpoint
+[`drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-dual-ablit-house-qsa-L3-47`](https://huggingface.co/drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-dual-ablit-house-qsa-L3-47):
+the same nvidia dual-Spark NVFP4 layout with a house residual-writer projection on 12 QSA
+`self_attn.o_proj` tensors at layers 3, 7, 11, 15, 19, 23, 27, 31, 35, 39, 43 and 47. GDN
+`out_proj`, routed experts, MTP, PLE, vision and the chat template stay stock. It is valid
+**only** on this recipe — do not use it with the single-Spark MXFP8 tree, official FP8, or
+`FP8_DENSE=true`. `./start-fp8.sh` and `FP8_DENSE=true` still win if you set them, and
+`ABLIT=1` is ignored for checkpoint selection in those cases.
+
+That Hugging Face repo is **gated**. `ABLIT=1 ./download.sh` **fails immediately** if
+`HF_TOKEN` is unset and prints the steps below. Set the token, **Accept the terms on that
+page**, then download the **full** snapshot (same nvidia NVFP4 size class, ~133 GiB). Stock
+and ablit caches sit side by side; flipping `ABLIT` is the only switch. `start.sh` rsyncs
+whichever checkpoint `ABLIT` selected onto the worker (or shares it over NFS). An interrupted
+download is not treated as ready — rerun `ABLIT=1 ./download.sh` to resume.
+
+```bash
+# 1. In .env: set ABLIT=1 and uncomment HF_TOKEN (or export both for this shell)
+# 2. In the browser, accept the terms on:
+#    https://huggingface.co/drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-dual-ablit-house-qsa-L3-47
+HF_TOKEN=hf_... ABLIT=1 ./download.sh
+ABLIT=1 ./start.sh
+```
+
+`HF_TOKEN` is required for `ABLIT=1`. A 403 means access has not been granted yet —
+**Accept the terms on that page**, then retry with `HF_TOKEN` set. Unlike most knobs in
+this launcher, `ABLIT` and `HF_TOKEN` honour the environment over `.env`, so
+`ABLIT=1 ./start.sh` works even when `.env` still has `ABLIT=0`. Switch back with
+`ABLIT=0 ./start.sh` (stock `MODEL_ID`; no re-download if that cache is already complete).
+
+**The gate is a binding agreement, not a download button.** The checkpoint ships its own
+responsible-use terms, and requesting access means accepting them. In summary: you must be
+18 or older; you are accountable for harm from generated recipes or knowledge; and the
+terms prohibit sexual content involving minors, material promoting self-harm or suicide,
+harassment, doxxing or fraud targeting real people, anything illegal in your jurisdiction,
+and any use barred by the NVIDIA Open Model License or the Qwen Community License 1.0.
+The weights are provided as-is with no warranty and inherit their licence from
+`nvidia/Qwen3.8-Flash-Next-NVFP4`. Read the repo's own terms before requesting access —
+this paragraph is a summary, and those terms are what bind.
+
+Safety refusals are removed in this checkpoint, which moves the guardrails onto you:
+filtering, human review and access control are yours to supply. That matters more here
+than on stock, because `start.sh` binds the server to `0.0.0.0` — anything that can reach
+the port can reach an unfiltered model.
+
+The abliteration splice is by **Keys (drowzeys)**, a house projection on NVIDIA stock
+(axis recovered per QSA layer from Dealign, not a Dealign weight dump). See the
+checkpoint's model card, and [Credits](#credits) below.
+
+The Keys `config.json` mislabels MTP routed experts as `FP8_PB_WO`; nvidia and
+this snapshot's own `hf_quant_config.json` record `FP8_BLOCK_SCALES` (same 128×128
+tensors). `start.sh` rewrites that overlay the same way it adds the `mtp.layers.48`
+alias, so MTP 3 still works.
+
 ## KV cache budget
 
 Measured on the running container at the shipped defaults (`KV_CACHE_DTYPE=fp8`,
-`GPU_MEMORY_UTILIZATION=0.835`, `MAX_MODEL_LEN=262144`, MTP3, TP2, nvidia NVFP4 checkpoint):
+`GPU_MEMORY_UTILIZATION=0.835`, `MAX_MODEL_LEN=262144`, MTP3, TP2, nvidia NVFP4 checkpoint).
+Official FP8 (`./start-fp8.sh`) is a different checkpoint — see
+[Official FP8 checkpoint](#official-fp8-checkpoint-optional); its available KV
+cache is around **500k tokens**, not the 3.65M below.
 
 ```
 [gpu_worker.py:693]   Available KV cache memory: 32.02 GiB
@@ -473,6 +564,37 @@ curl http://localhost:8888/v1/chat/completions \
 > prompt, and the vision encoder budget is 16,384 tokens (larger inputs are auto-resized /
 > sparse-sampled for video).
 
+## Chat-template kwargs
+
+Two kwargs the checkpoint's `chat_template.jinja` reads, neither of them obvious from the
+config. Pass both under `chat_template_kwargs`:
+
+**`reasoning_effort`** — `low` | `medium` | `xhigh`, default `xhigh`. Anything else is
+rejected while the template renders, so the request fails with HTTP 400 before it reaches
+the engine:
+
+```
+Unexpected reasoning effort max. Supported types are xhigh (default), medium, and low.
+```
+
+`high` and `max` are both **not** accepted. Worth knowing if you share one client config
+with models where they are valid — that is how we found it.
+
+**`enable_thinking`** — default `true`; `false` prefills an empty `<think></think>` block
+for a non-thinking turn. Note the interaction with the above: the `reasoning_effort` check
+sits *inside* the thinking branch of the template, so with `enable_thinking: false` an
+invalid `reasoning_effort` is silently ignored instead of rejected. The same client config
+400s in thinking mode and passes here.
+
+```bash
+curl http://localhost:8888/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3.8-flash-next","messages":[{"role":"user","content":"Hi"}],"max_tokens":2048,"chat_template_kwargs":{"reasoning_effort":"low"}}'
+```
+
+See [Multimodal](#multimodal) for the two adjacent facts that thinking consumes
+`max_tokens` and that `thinking_budget` is not honored by this build.
+
 ## Checkpoint: nvidia/Qwen3.8-Flash-Next-NVFP4
 
 133 GB / 11 shards: BF16 dense (attention, GDN, hyper-connections, shared experts,
@@ -713,18 +835,23 @@ reference; the numbers above supersede these.
   loads on this box — offloading will OOM or thrash swap. Keep it `false`
   here; the FP8 PLE shard fits comfortably on the GPU.
 - **Drop page caches before every launch** if you hit a `CUDA out of memory` that
-  "worked yesterday" on unified memory: `sync && echo 3 | sudo tee /proc/sys/vm/drop_caches`.
+  "worked yesterday" on unified memory: `sync && echo 3 | sudo tee /proc/sys/vm/drop_caches`
+  on **both** nodes. `start.sh` does **not** do this for you (it needs no root).
 - **Never point `IB_HCA` at an HCA cabled to another cluster** — NCCL will hang mid-NCCL-init
   with no useful error. One exact-match device per node (leading `=`).
+- **`IB_GID_INDEX=3` does not come up on every ConnectX/RoCE setup.** If NCCL/RoCE fails
+  to initialise, try `IB_GID_INDEX=5` (some clusters route on GID 5 instead).
 - **Cross-wired nodes**: head uses `f1`, worker `f0` — hence the separate `WORKER_IFACE` /
   `WORKER_IB_HCA` overrides. If you re-cable, set both.
 - **fp8 KV needs the QSA patch, which `start.sh` applies for you.** The stock kernels declare
   `supported_kv_cache_dtypes = ["auto", "bfloat16"]`; passing `--kv-cache-dtype fp8` to an
   unpatched image raises `Qwen3.8-Flash-Next QSA requires a BF16 main KV cache`. Do not hand-roll
   the flag — set `KV_CACHE_DTYPE` in `.env` so the patch is applied with it.
-- **`.env` beats the environment.** `start.sh` sources `.env` after reading the environment, so
-  `KV_CACHE_DTYPE=fp8 ./start.sh` is silently ignored for any key that `.env` already defines.
-  Edit `.env`, or check the `KV dtype:` line in the launch summary.
+- **`.env` beats the environment**, except `ABLIT` and `HF_TOKEN`. `start.sh` sources `.env`
+  after reading the environment, so `KV_CACHE_DTYPE=fp8 ./start.sh` is silently ignored for
+  any key that `.env` already defines. Edit `.env`, or check the `KV dtype:` line in the
+  launch summary. `ABLIT=1 ./start.sh` and `HF_TOKEN=hf_... ./download.sh` **do** win over
+  `.env`, matching the single-Spark 0/1 flag.
 - **MTP >1 token** logs `running multiple times of forward on same MTP layer, which may result
   in lower acceptance rate`, and the QSA backend can't fuse multi-step draft decode (it rebuilds
   attention metadata per draft step). `MTP_NUM_SPECULATIVE_TOKENS=1` is the safe comparison point.
@@ -734,6 +861,32 @@ reference; the numbers above supersede these.
 - **`NFS_SHARE=true` only:** do not stop `vllm-fn-nfs` while vLLM is loading or running — the
   worker reads shards from it. Cold start streams ~126 GiB over CX7 (lazy safetensors); once
   weights are in GPU memory the share is idle.
+- **Weights corruption is silent until load.** A shard corrupted mid-download keeps its
+  apparent size close enough that `check-weights.sh` (size + file count) passes, then the
+  engine dies at ~33% weight load with `safe_open` → "incomplete metadata, file not fully
+  covered". Run `./check-weights.sh --verify` after any download or rsync to hash every
+  shard against the Hugging Face manifest (read-only; ~1 min for 135 GB at the 2.4 GiB/s
+  8-thread hash rate measured on local NVMe, proportionally slower over NFS). If the nodes
+  are busy, `./check-weights.sh --dry-run` does the same planning and presence/size checks
+  without reading the weights.
+- **No route to `huggingface.co` from the nodes?** `--verify` needs the file manifest, not
+  the weights. Save it once where the API is reachable and pass it in — nothing else phones
+  home, and the same file is shipped to the worker:
+
+  ```bash
+  python3 verify-weights.py --repo RadixArk/Qwen3.8-Flash-Next-NVFP4 \
+      --save-manifest manifest.json --fetch-only     # where the API is reachable
+  ./check-weights.sh --manifest manifest.json        # on the head node
+  ```
+
+  `HF_API_BASE` in `.env` points the fetch at a mirror instead.
+- **No route to Docker Hub from the nodes?** `start.sh` runs `docker pull` on head and
+  worker, so both need to reach the registry. If only one node can, pull there and ship the
+  image over SSH — `docker save "$IMAGE" | ssh worker docker load`. If neither can, fetch it
+  from a host that can (`crane pull "$IMAGE" image.tar`, HTTP proxy if needed) and
+  `docker load < image.tar` on both nodes before running `./start.sh --launch`.
+- **`huggingface_hub >= 1.x` offline mode fails with "Cannot find cached snapshot"** if
+  `refs/main` has a trailing newline. Write `refs/main` with `printf`, not `echo`.
 
 ## Credits
 
@@ -745,6 +898,7 @@ reference; the numbers above supersede these.
 | Concurrency / prefill benchmarks | [MiaAI-Lab/sparkDash](https://github.com/MiaAI-Lab/sparkDash) |
 | PLE quant dispatch | ported from vLLM PR #53899 (`qwen4_exp`) |
 | Model | [nvidia/Qwen3.8-Flash-Next-NVFP4](https://huggingface.co/nvidia/Qwen3.8-Flash-Next-NVFP4) |
+| Abliteration splice (`ABLIT=1`) | **Keys (drowzeys)** — [keys-Qwen3.8-Flash-Next-NVFP4-dual-ablit-house-qsa-L3-47](https://huggingface.co/drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-dual-ablit-house-qsa-L3-47) (gated; house QSA `o_proj` L3–47 on nvidia NVFP4) |
 
 ## License
 
@@ -757,11 +911,24 @@ vLLM remains Apache-2.0; the container image and the model checkpoint are govern
 upstream terms, and nothing here relicenses them. Files under `files/` that carry an
 `SPDX-License-Identifier` header keep the license of their origin — see each file.
 
+**The abliterated checkpoint**
+`drowzeys/keys-Qwen3.8-Flash-Next-NVFP4-dual-ablit-house-qsa-L3-47`, served only when you
+opt in with `ABLIT=1`, is gated on Hugging Face behind its own responsible-use agreement,
+with its licence inherited from `nvidia/Qwen3.8-Flash-Next-NVFP4` (NVIDIA Open Model
+License + Qwen Community License 1.0). This repository ships a flag that can serve those
+weights. It does not redistribute them and does not relicense them.
+
 ## Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `download.sh` | fetch weights onto the **head** (`--fp8` for official FP8); `start.sh` handles the worker |
-| `start.sh` | optional download on head → distribute to worker (rsync, or NFS with `--nfs`) → verify → image sync → PLE + MXFP8 patches → launch rank 1 then rank 0 |
+| `download.sh` | fetch weights onto the **head** (`ABLIT=1` for the gated Keys house snapshot — requires `HF_TOKEN` and accepted Hugging Face terms; `--fp8` for official FP8); `start.sh` handles the worker |
+| `start.sh` | optional download on head → distribute to worker (rsync, or NFS with `--nfs`) → verify complete snapshot → image sync → PLE + MXFP8 patches → launch rank 1 then rank 0. `ABLIT=1` selects the Keys house checkpoint |
+| `start-fp8.sh` | optional official FP8 path (`Qwen/Qwen3.8-Flash-Next-FP8`); native 262K, no YaRN; **~500k KV cache tokens** on this kit |
 | `stop.sh` | `docker rm -f vllm-fn` on worker, then head (`--nfs` also stops the share) |
 | `check-weights.sh` | verify the checkpoint on the head and on the worker (local copy, or over NFS when `NFS_SHARE=true`) |
+| `check-weights.sh --verify` | per-file SHA-256 verification against the Hugging Face manifest (~1 min read-only) |
+| `check-weights.sh --dry-run` | plan `--verify` (fetch manifest, check presence/size) without hashing or scp |
+| `check-weights.sh --dry-run` | plan `--verify` (fetch manifest, check presence/size) without hashing or scp |
+| `check-weights.sh --manifest FILE` | verify against a manifest saved earlier — no Hugging Face API call |
+| `verify-weights.py` | per-file SHA-256 verification against the Hugging Face manifest (used by `check-weights.sh --verify`) |
