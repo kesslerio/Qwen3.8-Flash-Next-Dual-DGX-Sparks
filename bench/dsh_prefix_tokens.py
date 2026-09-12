@@ -35,4 +35,4 @@ for line in sys.stdin:
   row.update(rendered_tokens=len(ids),reported_prompt_tokens=expected,token_count_matches=len(ids)==expected,cached_tokens=usage.get('cacheReadTokens'),prefix_overlap_tokens=count if old else None,previous_prompt_tokens=len(old['ids']) if old else None,tool_schema_sha256=hash_(body.get('tools')),tool_schema_changed=hash_(body.get('tools'))!=old['tools'] if old else None)
   previous[row['session']]={'ids':ids,'tools':hash_(body.get('tools'))}
   print(json.dumps(row),flush=True)
- except Exception as exc:print(json.dumps({'session':row['session'],'seq':row['seq'],'error':str(exc),'roles':sorted({m['role'] for m in body['messages']})}),flush=True)
+ except Exception as exc:print(json.dumps({'session':row['session'],'seq':row['seq'],'error':type(exc).__name__+': offline tokenization failed','roles':sorted({m['role'] for m in body['messages']})}),flush=True)

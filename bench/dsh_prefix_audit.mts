@@ -27,6 +27,6 @@ for (const path of inputs) {
    const output=stream(model,context,{apiKey:'unused-offline',reasoningEffort:header.config.reasoningEffort==='off'?undefined:header.config.reasoningEffort,fetch:async()=>{throw Error('Offline audit forbids network')},onPayload:p=>{body=p;throw Error('Offline serialization complete')}});
    await output.result();if(!body)throw Error('Wire serialization failed');
    process.stdout.write(JSON.stringify({session:path.split('/').slice(-2,-1)[0],seq:event.seq,turn:event.data.turn,step:event.data.step,usage:event.data.usage,body})+'\n');
-  } catch(error) {process.stdout.write(JSON.stringify({session:path.split('/').slice(-2,-1)[0],seq:event.seq,error:String(error).split('\n')[0]})+'\n');}
+  } catch(error) {process.stdout.write(JSON.stringify({session:path.split('/').slice(-2,-1)[0],seq:event.seq,error:(error instanceof Error ? error.name : 'Error')+': offline reconstruction failed'})+'\n');}
  }
 }
