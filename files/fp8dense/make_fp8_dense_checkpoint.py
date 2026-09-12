@@ -377,6 +377,10 @@ def main() -> int:
     src, dst = os.path.abspath(args.src), os.path.abspath(args.dst)
     if os.path.realpath(src) == os.path.realpath(dst):
         ap.error("--dst must differ from --src")
+    if args.resume:
+        ap.error("resume is disabled for qualification; retain failed builds separately")
+    if args.link_unchanged_from and os.path.realpath(args.link_unchanged_from) != os.path.realpath(src):
+        ap.error("qualification only reuses unchanged shards from the exact source snapshot; matching shapes do not prove matching weights")
     if os.path.isdir(dst) and os.listdir(dst):
         ap.error("destination must be empty; preserve prior attempts separately")
     os.makedirs(dst, exist_ok=True)
@@ -428,9 +432,8 @@ def main() -> int:
         planned = convert_shard(os.path.join(src, f), dst_shard, stats, dry_run=True)
         reuse = None
         if args.link_unchanged_from and not (args.resume and os.path.exists(dst_shard)):
-            # Reuse an earlier build's shard only if its header is exactly the planned
-            # output (same tensor names, dtypes, shapes, order, and __metadata__): the
-            # conversion is deterministic, so identical plans give identical bytes.
+            # Only the exact source snapshot may be reused (validated above).
+            # Matching another checkpoint's header cannot establish tensor identity.
             cand = os.path.join(os.path.abspath(args.link_unchanged_from), f)
             if os.path.isfile(cand):
                 chdr, _ = read_header(cand)
@@ -497,6 +500,8 @@ def main() -> int:
     comment = ("NVFP4 routed experts from RadixArk/Qwen3.8-Flash-Next-NVFP4; dense projections "
                "requantized to FP8 E4M3 per-output-channel (dynamic per-token activations) by "
                "files/fp8dense/make_fp8_dense_checkpoint.py")
+    if args.draft_only:
+        comment = "Draft-only conversion: original target tensors preserved; MTP dense projections quantized to FP8 per-channel"
     if MTP_DENSE:
         comment += "; MTP dense/HC projections likewise (--mtp-dense)"
     if MTP_EXPERTS:
