@@ -50,7 +50,7 @@ def metrics(base):
         if name in ('vllm:num_requests_running', 'vllm:num_requests_waiting',
                     'vllm:generation_tokens_total', 'vllm:num_preemptions_total'):
             values[name] = values.get(name, 0) + float(line.rsplit(' ', 1)[1])
-    required = ('vllm:num_requests_running', 'vllm:num_requests_waiting', 'vllm:generation_tokens_total')
+    required = ('vllm:num_requests_running', 'vllm:num_requests_waiting', 'vllm:generation_tokens_total', 'vllm:num_preemptions_total')
     if not all(k in values for k in required):
         raise RuntimeError('Required server counters missing; cannot verify isolation')
     return values
@@ -66,10 +66,12 @@ def idle(base, timeout=180):
         time.sleep(1)
     raise RuntimeError('Requests did not drain; leave production traffic alone')
 
-def request(base, payload, progress=None):
+def request(base, payload, progress=None, retain_wire=False):
     start = time.monotonic()
     row = {'started_utc': time.time(), 'start': start, 'payload_sha256': digest(payload),
            'usage': None, 'first': None, 'last': None, 'finish': None, 'output': '', 'gaps_s': [], 'tool_calls': {}}
+    if retain_wire:
+        row['wire_events'] = []
     try:
         with fetch(base, '/v1/chat/completions', payload) as response:
             for raw in response:
@@ -79,6 +81,8 @@ def request(base, payload, progress=None):
                 if data == b'[DONE]':
                     break
                 event = json.loads(data)
+                if retain_wire:
+                    row['wire_events'].append(event)
                 if event.get('error'):
                     raise RuntimeError(str(event['error']))
                 if event.get('usage'):
@@ -175,7 +179,7 @@ def main():
     parser.add_argument('--base', default='http://100.120.26.16:8888')
     parser.add_argument('--records', type=Path, required=True)
     parser.add_argument('--profile', required=True)
-    parser.add_argument('--suite', choices=('decode', 'interference', 'conversation'), required=True)
+    parser.add_argument('--suite', choices=('decode', 'interference', 'conversation', 'capacity'), required=True)
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--concurrencies', default='1,4,6')
     parser.add_argument('--contexts', default='32000,128000,240000')
@@ -199,6 +203,14 @@ def main():
             elif args.suite == 'interference':
                 ctx = context(args.base, 128000, uuid.uuid4().hex)
                 group(args.base, directory, f'interference-r{rep}', [payload(PROMPTS['prose'], temperature=args.temperature, fixed=True), payload(ctx + '\nSummarize the format of this ledger in one sentence.', 100, args.temperature)], True)
+            elif args.suite == 'capacity':
+                prompts = []
+                for branch in range(6):
+                    ctx = context(args.base, 261900, uuid.uuid4().hex)
+                    prompts.append(payload(f'Audit marker={73019 + branch}.\n' + ctx + '\nRepeat the audit marker as only an integer.', 64, args.temperature))
+                rows = group(args.base, directory, f'six-full-contexts-r{rep}', prompts)
+                passed = all(r['output'].strip().strip('.') == str(73019 + b) for b, r in enumerate(rows))
+                append(directory / 'events.jsonl', {'event': 'assertion', 'label': f'six-full-contexts-r{rep}', 'passed': passed})
             else:
                 for size in map(int, args.contexts.split(',')):
                     ctx = context(args.base, size, uuid.uuid4().hex)

@@ -59,23 +59,23 @@ def json_answer(text):
         text='\n'.join(text.splitlines()[1:-1])
     return json.loads(text)
 
-def task(base, case):
+def task(base, case, temperature=0):
     start=time.monotonic(); rows=[]; result={'case':case['id'],'passed':False}
     try:
         if case['kind']=='repo':
-            p=payload('Read '+case['path']+' with read_file, then answer this question as JSON only: '+case['question']+' Use this JSON shape: '+json.dumps({k:None for k in case['expected']}),384)
+            p=payload('Read '+case['path']+' with read_file, then answer this question as JSON only: '+case['question']+' Use this JSON shape: '+json.dumps({k:None for k in case['expected']}),384,temperature)
             p.update(tools=[TOOL],tool_choice='required')
-            first=request(base,p);rows.append(first)
+            first=request(base,p,retain_wire=True);rows.append(first)
             calls=list(first['tool_calls'].values())
             if len(calls)!=1 or calls[0]['function']['name']!='read_file':raise ValueError('tool protocol')
             args=json.loads(calls[0]['function']['arguments'])
             if args!={'path':case['path']}:raise ValueError('wrong repository path')
             p['messages'] += [{'role':'assistant','content':first['output'] or None,'tool_calls':calls},
                               {'role':'tool','tool_call_id':calls[0]['id'],'content':FILES[case['path']]}]
-            p['tool_choice']='none';final=request(base,p);rows.append(final)
+            p['tool_choice']='none';final=request(base,p,retain_wire=True);rows.append(final)
             result['passed']=json_answer(final['output'])==case['expected']
         elif case['kind']=='repair':
-            r=request(base,payload(case['task']+' Return only JSON with a code key containing the Python function. Use no imports.',512));rows.append(r)
+            r=request(base,payload(case['task']+' Return only JSON with a code key containing the Python function. Use no imports.',512,temperature));rows.append(r)
             code=json_answer(r['output'])['code']
             check=subprocess.run([sys.executable,'-I','-c',SANDBOX],input=json.dumps({'code':code,'tests':case['tests']}),capture_output=True,text=True,timeout=3)
             result['passed']=check.returncode==0
@@ -85,7 +85,7 @@ def task(base, case):
             for index,value in enumerate(values):
                 sections.append(f'Authoritative audit item {index}: {value}.\n')
                 sections.extend(f'Unrelated shipment {index}-{i}, quantity {(i*37)%997}.\n' for i in range(350))
-            r=request(base,payload(''.join(sections)+'\nReturn only JSON with values listing the three authoritative audit items in order and sum containing their total.',256));rows.append(r)
+            r=request(base,payload(''.join(sections)+'\nReturn only JSON with values listing the three authoritative audit items in order and sum containing their total.',256,temperature));rows.append(r)
             result['passed']=json_answer(r['output'])=={'values':values,'sum':sum(values)}
         if any(r.get('error') for r in rows):result['passed']=False
     except Exception as exc:
@@ -97,18 +97,19 @@ def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--base',default='http://100.120.26.16:8888');p.add_argument('--records',type=Path,required=True)
     p.add_argument('--profile',required=True);p.add_argument('--repeats',type=int,default=3);p.add_argument('--concurrencies',default='1,3')
+    p.add_argument('--temperature',type=float,default=0)
     a=p.parse_args();os.umask(0o077)
     directory=a.records/(time.strftime('%Y%m%dT%H%M%S',time.gmtime())+'-'+a.profile+'-tasks-'+uuid.uuid4().hex[:8]);directory.mkdir(parents=True)
     for name in ('task_qualification.py','qualification.py'):
         (directory/name).write_bytes(Path(__file__).with_name(name).read_bytes())
-    (directory/'manifest.json').write_text(json.dumps({'profile':a.profile,'suite':'tasks','fixtures_sha256':digest({'cases':CASES,'files':FILES}),'repeats':a.repeats,'concurrencies':a.concurrencies},indent=2))
+    (directory/'manifest.json').write_text(json.dumps({'profile':a.profile,'suite':'tasks','fixtures_sha256':digest({'cases':CASES,'files':FILES}),'repeats':a.repeats,'concurrencies':a.concurrencies,'temperature':a.temperature},indent=2))
     print('RUN_DIRECTORY='+str(directory),flush=True)
     for repeat in range(a.repeats):
         for c in map(int,a.concurrencies.split(',')):
             before=idle(a.base)
             append(directory/'events.jsonl',{'event':'wave_start','repeat':repeat,'concurrency':c,'before':before})
             with concurrent.futures.ThreadPoolExecutor(max_workers=c) as pool:
-                futures=[pool.submit(task,a.base,case) for case in CASES]
+                futures=[pool.submit(task,a.base,case,a.temperature) for case in CASES]
                 rows=[]
                 for future in concurrent.futures.as_completed(futures):
                     row=future.result();rows.append(row)
