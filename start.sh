@@ -241,7 +241,7 @@ if [[ -n "${MODEL_REVISION:-}" ]]; then
     [[ -f "$PLE_CONFIG_DIR/config.json" ]] || err "Pinned snapshot missing: $MODEL_REVISION"
     if [[ -n "${QWEN_PROFILE:-}" ]]; then
         python3 "$SCRIPT_DIR/deploy/release_preflight.py" \
-            "$SCRIPT_DIR/deploy/profiles/nvfp4-manifest.json" "$PLE_CONFIG_DIR"
+            "${QWEN_MODEL_MANIFEST:-$SCRIPT_DIR/deploy/profiles/nvfp4-manifest.json}" "$PLE_CONFIG_DIR"
     fi
 fi
 if [[ ! -f "$PLE_CONFIG_DIR/config.json" ]]; then
@@ -384,8 +384,8 @@ extract_from_image() {   # extract_from_image <container path> <host dest>
 if $DO_LAUNCH && [[ "$FP8_DENSE" == "true" ]]; then
     info "=== Step 4c: FP8-dense overlay ==="
     OV="$SCRIPT_DIR/files/overlay"
-    [[ -f "$OV/modelopt.py" ]] || python3 "$OV/apply_patches.py"
-    add_overlay "$OV/modelopt.py"        "$VLLM_PKG/model_executor/layers/quantization/modelopt.py"
+    IMAGE="$IMAGE" python3 "$OV/apply_patches.py" --force
+    # modelopt is stacked onto the always-mounted MXFP8/block-MoE overlay below.
     add_overlay "$OV/model.py"           "$VLLM_PKG/models/qwen3_8_flash_next/nvidia/model.py"
     add_overlay "$OV/hyperconnection.py" "$VLLM_PKG/models/qwen3_8_flash_next/nvidia/hyperconnection.py"
     add_overlay "$OV/mtp.py"             "$VLLM_PKG/models/qwen3_8_flash_next/nvidia/mtp.py"
@@ -615,6 +615,9 @@ if $DO_LAUNCH; then
     # Stacks on top: adds the FP8_BLOCK_SCALES routed-expert branch that neither
     # this image nor upstream vLLM has, which is what MTP needs on this checkpoint.
     python3 "$SCRIPT_DIR/files/patch_modelopt_fp8_block_moe.py"
+    if [[ "$FP8_DENSE" == "true" ]]; then
+        python3 "$SCRIPT_DIR/files/stack_modelopt_fp8dense.py" "$SCRIPT_DIR"
+    fi
     ok "MXFP8 fallback patch ready: $PATCHED_MODELOPT"
     HEAD_MODELOPT_MOUNT="-v $PATCHED_MODELOPT:$MODEL_OPT_PKG:ro"
     WORKER_MODELOPT_MOUNT="-v /tmp/modelopt_patched.py:$MODEL_OPT_PKG:ro"

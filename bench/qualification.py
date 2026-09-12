@@ -18,6 +18,7 @@ import urllib.request
 import uuid
 
 MODEL = 'qwen3.8-flash-next'
+RECORD_LOCK = threading.Lock()
 PROMPTS = {
     'prose': 'Explain hash maps in detailed prose, including collisions, load factors, open addressing, resizing and concrete tradeoffs. Aim for 1000 words.',
     'code': 'Implement a complete Python LRU cache with get, put, bounded capacity and tests. Explain its concurrency and complexity tradeoffs in comments.',
@@ -27,10 +28,11 @@ def digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 
 def append(path, row):
-    with path.open('a') as f:
-        f.write(json.dumps(row, separators=(',', ':')) + '\n')
-        f.flush()
-        os.fsync(f.fileno())
+    with RECORD_LOCK:
+        with path.open('a') as f:
+            f.write(json.dumps(row, separators=(',', ':')) + '\n')
+            f.flush()
+            os.fsync(f.fileno())
 
 def fetch(base, path, payload=None, timeout=1200):
     request = urllib.request.Request(base + path, data=None if payload is None else json.dumps(payload).encode(),
@@ -123,6 +125,7 @@ def payload(prompt, tokens=800, temperature=0, fixed=False):
 
 def group(base, directory, label, payloads, interference=False):
     before = idle(base)
+    append(directory / 'synthetic-payloads.jsonl', {'label': label, 'payloads': payloads})
     append(directory / 'events.jsonl', {'event': 'group_start', 'label': label, 'utc': time.time(), 'before': before})
     progress = threading.Event()
     barrier = threading.Barrier(len(payloads))
@@ -134,6 +137,7 @@ def group(base, directory, label, payloads, interference=False):
             time.sleep(2)
         result = request(base, payloads[index], progress if index == 0 else None)
         result['index'] = index
+        append(directory / 'requests.jsonl', {'label': label, **result})
         return result
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(payloads)) as pool:
         rows = list(pool.map(run, range(len(payloads))))

@@ -10,13 +10,35 @@ import shlex
 def render(config):
     allowed = {'id', 'kv_cache_memory_bytes', 'max_num_batched_tokens', 'max_num_seqs',
                'mtp_tokens', 'index_share_for_mtp_iteration', 'draft_sample_method',
-               'draft_vocab', 'extra_env', 'async_scheduling'}
+               'draft_vocab', 'extra_env', 'async_scheduling', 'derived_checkpoint'}
     if not isinstance(config, dict) or set(config) - allowed:
         raise ValueError('Unknown tuning fields')
     if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,79}', config.get('id', '')):
         raise ValueError('Invalid experiment ID')
     result = {'QWEN_EXPERIMENT_ID': config['id'],
               'QWEN_EXPERIMENT_SHA256': hashlib.sha256(json.dumps(config, sort_keys=True).encode()).hexdigest()}
+    derived = config.get('derived_checkpoint')
+    if derived is not None:
+        if not isinstance(derived, dict) or set(derived) != {'model_id', 'revision', 'manifest', 'kind'}:
+            raise ValueError('Derived checkpoint requires model_id/revision/manifest/kind')
+        if derived['kind'] not in ('draft-only', 'target-fp8'):
+            raise ValueError('Unknown quantization trial kind')
+        if not re.fullmatch(r'kesslerio/Qwen3[.]8-Flash-Next-[A-Za-z0-9-]+', derived['model_id']):
+            raise ValueError('Derived checkpoint must have a task-owned identity')
+        if not re.fullmatch(r'[a-f0-9]{40}', derived['revision']):
+            raise ValueError('Derived revision must be immutable')
+        manifest = Path(derived['manifest'])
+        if not manifest.is_absolute() or not manifest.is_file():
+            raise ValueError('Derived inventory manifest missing')
+        inventory = json.loads(manifest.read_text())
+        if inventory.get('sha') != derived['revision'] or inventory.get('repo_id') != derived['model_id']:
+            raise ValueError('Derived identity differs from its inventory')
+        if derived['kind'] == 'draft-only' and not inventory.get('target_identity_verified'):
+            raise ValueError('Draft-only target identity proof missing')
+        result.update(MODEL_ID=derived['model_id'], MODEL_REVISION=derived['revision'],
+                      QWEN_MODEL_MANIFEST=str(manifest), FP8_DENSE='true', FP8_DENSE_MODEL_ID=derived['model_id'])
+        if config.get('draft_vocab'):
+            raise ValueError('Quantized-checkpoint and reduced-vocabulary stacking must be qualified separately')
     for key, target, minimum, maximum in (
         ('kv_cache_memory_bytes', 'KV_CACHE_MEMORY_BYTES', 16_000_000_000, 40_000_000_000),
         ('max_num_batched_tokens', 'MAX_NUM_BATCHED_TOKENS', 2048, 8192),
