@@ -196,11 +196,21 @@ def main():
             else:
                 for size in map(int, args.contexts.split(',')):
                     ctx = context(args.base, size, uuid.uuid4().hex)
-                    p = payload(ctx + '\nThe audit checksum is 73019. Reply with only that number.', 32)
+                    mid = len(ctx) // 2
+                    ctx = 'Audit north=73019.\n' + ctx[:mid] + '\nAudit west=21863.\n' + ctx[mid:] + '\nAudit east=59147.\n'
+                    p = payload(ctx + '\nReturn JSON with keys north, west, east and their audit integer values. No other text.', 96)
                     cold = group(args.base, directory, f'cold-{size}-r{rep}', [p])[0]
-                    p['messages'] += [{'role': 'assistant', 'content': cold['output']}, {'role': 'user', 'content': 'Add 2 to the audit checksum. Reply with only the result.'}]
-                    warm = group(args.base, directory, f'warm-{size}-r{rep}', [p])[0]
-                    passed = cold['output'].strip().strip('.') == '73019' and warm['output'].strip().strip('.') == '73021'
+                    branches = []
+                    for branch in range(3):
+                        q = json.loads(json.dumps(p))
+                        q['messages'] += [{'role': 'assistant', 'content': cold['output']}, {'role': 'user', 'content': f'Add north, west, east and {branch}. Reply with only the integer.'}]
+                        branches.append(q)
+                    warm = group(args.base, directory, f'warm-branches-{size}-r{rep}', branches)
+                    try:
+                        passed = json.loads(cold['output']) == {'north': 73019, 'west': 21863, 'east': 59147}
+                    except ValueError:
+                        passed = False
+                    passed = passed and all(r['output'].strip().strip('.') == str(154029 + b) for b, r in enumerate(warm))
                     append(directory / 'events.jsonl', {'event': 'assertion', 'label': f'conversation-{size}-r{rep}', 'passed': passed})
                     if not passed:
                         raise RuntimeError('Conversation correctness failed')
