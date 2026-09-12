@@ -179,6 +179,7 @@ def main():
     os.umask(0o077)
     directory = args.records / (time.strftime('%Y%m%dT%H%M%S', time.gmtime()) + '-' + args.profile + '-' + uuid.uuid4().hex[:8])
     directory.mkdir(parents=True)
+    (directory / 'qualification-source.py').write_bytes(Path(__file__).read_bytes())
     manifest = {'schema': 1, 'run_id': directory.name, 'profile': args.profile, 'suite': args.suite,
                 'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                 'fixtures_sha256': digest(PROMPTS), 'arguments': {k: str(v) for k, v in vars(args).items()}}
@@ -212,8 +213,8 @@ def main():
                         passed = False
                     passed = passed and all(r['output'].strip().strip('.') == str(154029 + b) for b, r in enumerate(warm))
                     append(directory / 'events.jsonl', {'event': 'assertion', 'label': f'conversation-{size}-r{rep}', 'passed': passed})
-                    if not passed:
-                        raise RuntimeError('Conversation correctness failed')
+                    # A wrong answer is a retained quality result, not a reason to
+                    # omit later context sizes. Contamination/transport still abort.
         append(directory / 'events.jsonl', {'event': 'run_finish', 'status': 'complete', 'utc': time.time()})
     except BaseException as exc:
         append(directory / 'events.jsonl', {'event': 'run_finish', 'status': 'failed', 'error': str(exc)[:300], 'utc': time.time()})
