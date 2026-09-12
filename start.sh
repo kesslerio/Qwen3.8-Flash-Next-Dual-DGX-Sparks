@@ -636,6 +636,9 @@ if $DO_LAUNCH; then
     fi
     VLLM_ARGS+=("--tensor-parallel-size" "$TENSOR_PARALLEL_SIZE")
     VLLM_ARGS+=("--gpu-memory-utilization" "$GPU_MEMORY_UTILIZATION")
+    if [[ -n "${KV_CACHE_MEMORY_BYTES:-}" ]]; then
+        VLLM_ARGS+=("--kv-cache-memory-bytes" "$KV_CACHE_MEMORY_BYTES")
+    fi
     VLLM_ARGS+=("--max-num-seqs" "$MAX_NUM_SEQS")
     VLLM_ARGS+=("--max-num-batched-tokens" "$MAX_NUM_BATCHED_TOKENS")
     VLLM_ARGS+=("--max-model-len" "$MAX_MODEL_LEN")
@@ -659,7 +662,9 @@ if $DO_LAUNCH; then
 
     # JSON args: use printf to build properly quoted strings for the heredoc
     if [[ "$MTP_NUM_SPECULATIVE_TOKENS" -gt 0 ]]; then
-        if [[ -n "$MTP_DRAFT_VOCAB" ]]; then
+        if [[ -n "${SPEC_CONFIG_JSON:-}" ]]; then
+            VLLM_ARGS+=("--speculative-config" "$(python3 -c 'import json,shlex,sys; print(shlex.quote(json.dumps(json.loads(sys.argv[1]),separators=(",",":"))))' "$SPEC_CONFIG_JSON")")
+        elif [[ -n "$MTP_DRAFT_VOCAB" ]]; then
             # get_top_tokens (added by patch_mtp_draft_vocab.py) is only reached
             # through this flag; it also cuts the draft all-gather from
             # O(vocab_size) to O(2*tp_size) per token.
@@ -670,6 +675,9 @@ if $DO_LAUNCH; then
     fi
 
     VLLM_ARGS+=("--compilation-config" "$(printf "'{\"mode\":0,\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}'")")
+    if [[ -n "${QWEN_ASYNC_SCHEDULING_ARG:-}" ]]; then
+        VLLM_ARGS+=("$QWEN_ASYNC_SCHEDULING_ARG")
+    fi
 
     # hf-overrides: ONE merged payload, nested under "text_config".
     # vLLM's ModelConfig._apply_dict_overrides only recurses into keys that are
@@ -708,6 +716,7 @@ print(json.dumps({"text_config": tc}, separators=(",", ":")) if tc else "")
     # values already carry their own single quotes (see printf above).
     VLLM_ARGS_STR="${VLLM_ARGS[*]}"
     OVERLAY_ENV_STR="${OVERLAY_ENV[*]:-}"
+    OVERLAY_ENV_STR+=" ${QWEN_EXTRA_ENV_ARGS:-}"
 
     # Build docker run args (base, without node-specific VLLM_HOST_IP)
     DOCKER_ARGS=()
