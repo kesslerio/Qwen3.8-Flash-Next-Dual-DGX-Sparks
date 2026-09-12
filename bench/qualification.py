@@ -179,6 +179,7 @@ def main():
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--concurrencies', default='1,4,6')
     parser.add_argument('--contexts', default='32000,128000,240000')
+    parser.add_argument('--temperature', type=float, default=0)
     args = parser.parse_args()
     os.umask(0o077)
     directory = args.records / (time.strftime('%Y%m%dT%H%M%S', time.gmtime()) + '-' + args.profile + '-' + uuid.uuid4().hex[:8])
@@ -194,16 +195,16 @@ def main():
             if args.suite == 'decode':
                 for kind, prompt in PROMPTS.items():
                     for c in map(int, args.concurrencies.split(',')):
-                        group(args.base, directory, f'{kind}-c{c}-r{rep}', [payload(prompt, fixed=True) for _ in range(c)])
+                        group(args.base, directory, f'{kind}-c{c}-r{rep}', [payload(prompt, temperature=args.temperature, fixed=True) for _ in range(c)])
             elif args.suite == 'interference':
                 ctx = context(args.base, 128000, uuid.uuid4().hex)
-                group(args.base, directory, f'interference-r{rep}', [payload(PROMPTS['prose'], fixed=True), payload(ctx + '\nSummarize the format of this ledger in one sentence.', 100)], True)
+                group(args.base, directory, f'interference-r{rep}', [payload(PROMPTS['prose'], temperature=args.temperature, fixed=True), payload(ctx + '\nSummarize the format of this ledger in one sentence.', 100, args.temperature)], True)
             else:
                 for size in map(int, args.contexts.split(',')):
                     ctx = context(args.base, size, uuid.uuid4().hex)
                     mid = len(ctx) // 2
                     ctx = 'Audit north=73019.\n' + ctx[:mid] + '\nAudit west=21863.\n' + ctx[mid:] + '\nAudit east=59147.\n'
-                    p = payload(ctx + '\nReturn JSON with keys north, west, east and their audit integer values. No other text.', 96)
+                    p = payload(ctx + '\nReturn JSON with keys north, west, east and their audit integer values. No other text.', 96, args.temperature)
                     cold = group(args.base, directory, f'cold-{size}-r{rep}', [p])[0]
                     branches = []
                     for branch in range(3):
