@@ -184,7 +184,24 @@ def main():
     parser.add_argument('--concurrencies', default='1,4,6')
     parser.add_argument('--contexts', default='32000,128000,240000')
     parser.add_argument('--temperature', type=float, default=0)
+    parser.add_argument('--fixture-run', type=Path, action='append', default=[],
+                        help='Replay archived synthetic payloads; may combine context runs. Cold cache salts remain unique.')
     args = parser.parse_args()
+    fixtures = {}
+    for source in args.fixture_run:
+        for line in (source / 'synthetic-payloads.jsonl').read_text().splitlines():
+            record = json.loads(line)
+            if record['label'] in fixtures and fixtures[record['label']] != record['payloads']:
+                raise ValueError('Ambiguous fixture label: ' + record['label'])
+            fixtures[record['label']] = record['payloads']
+    def replay(label):
+        key = label if label in fixtures else label.rsplit('-r', 1)[0] + '-r0'
+        if key not in fixtures:
+            raise ValueError('Archived fixture missing: ' + label)
+        bodies = json.loads(json.dumps(fixtures[key]))
+        for body in bodies:
+            body['temperature'] = args.temperature
+        return bodies
     os.umask(0o077)
     directory = args.records / (time.strftime('%Y%m%dT%H%M%S', time.gmtime()) + '-' + args.profile + '-' + uuid.uuid4().hex[:8])
     directory.mkdir(parents=True)
@@ -201,23 +218,36 @@ def main():
                     for c in map(int, args.concurrencies.split(',')):
                         group(args.base, directory, f'{kind}-c{c}-r{rep}', [payload(prompt, temperature=args.temperature, fixed=True) for _ in range(c)])
             elif args.suite == 'interference':
-                ctx = context(args.base, 128000, uuid.uuid4().hex)
-                group(args.base, directory, f'interference-r{rep}', [payload(PROMPTS['prose'], temperature=args.temperature, fixed=True), payload(ctx + '\nSummarize the format of this ledger in one sentence.', 100, args.temperature)], True)
+                label = f'interference-r{rep}'
+                if fixtures:
+                    bodies = replay(label)
+                else:
+                    ctx = context(args.base, 128000, 'qualification-interference-v1')
+                    bodies = [payload(PROMPTS['prose'], temperature=args.temperature, fixed=True), payload(ctx + '\nSummarize the format of this ledger in one sentence.', 100, args.temperature)]
+                bodies[1]['cache_salt'] = uuid.uuid4().hex + uuid.uuid4().hex
+                group(args.base, directory, label, bodies, True)
             elif args.suite == 'capacity':
                 prompts = []
                 for branch in range(6):
-                    ctx = context(args.base, 261900, uuid.uuid4().hex)
-                    prompts.append(payload(f'Audit marker={73019 + branch}.\n' + ctx + '\nRepeat the audit marker as only an integer.', 64, args.temperature))
+                    ctx = context(args.base, 261900, f'qualification-capacity-v1-{branch}')
+                    body = payload(f'Audit marker={73019 + branch}.\n' + ctx + '\nRepeat the audit marker as only an integer.', 64, args.temperature)
+                    body['cache_salt'] = uuid.uuid4().hex + uuid.uuid4().hex
+                    prompts.append(body)
                 rows = group(args.base, directory, f'six-full-contexts-r{rep}', prompts)
                 passed = all(r['output'].strip().strip('.') == str(73019 + b) for b, r in enumerate(rows))
                 append(directory / 'events.jsonl', {'event': 'assertion', 'label': f'six-full-contexts-r{rep}', 'passed': passed})
             else:
                 for size in map(int, args.contexts.split(',')):
-                    ctx = context(args.base, size, uuid.uuid4().hex)
-                    mid = len(ctx) // 2
-                    ctx = 'Audit north=73019.\n' + ctx[:mid] + '\nAudit west=21863.\n' + ctx[mid:] + '\nAudit east=59147.\n'
-                    p = payload(ctx + '\nReturn JSON with keys north, west, east and their audit integer values. No other text.', 96, args.temperature)
-                    cold = group(args.base, directory, f'cold-{size}-r{rep}', [p])[0]
+                    label = f'cold-{size}-r{rep}'
+                    if fixtures:
+                        p = replay(label)[0]
+                    else:
+                        ctx = context(args.base, size, f'qualification-conversation-v1-{size}')
+                        mid = len(ctx) // 2
+                        ctx = 'Audit north=73019.\n' + ctx[:mid] + '\nAudit west=21863.\n' + ctx[mid:] + '\nAudit east=59147.\n'
+                        p = payload(ctx + '\nReturn JSON with keys north, west, east and their audit integer values. No other text.', 96, args.temperature)
+                    p['cache_salt'] = uuid.uuid4().hex + uuid.uuid4().hex
+                    cold = group(args.base, directory, label, [p])[0]
                     branches = []
                     for branch in range(3):
                         q = json.loads(json.dumps(p))
