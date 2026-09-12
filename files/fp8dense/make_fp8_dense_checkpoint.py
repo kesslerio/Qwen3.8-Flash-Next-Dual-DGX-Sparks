@@ -363,8 +363,7 @@ def main() -> int:
     ap.add_argument("--mtp-experts", action="store_true",
                     help="128x128 block FP8 (FP8_BLOCK_SCALES, per-expert weight_scale_inv) for the MTP routed experts")
     ap.add_argument("--link-unchanged-from", default=None, metavar="DIR",
-                    help="earlier fp8dense snapshot: bf16 shards whose planned output is identical "
-                         "(same tensor names/dtypes/shapes) are hard-linked from it instead of rebuilt")
+                    help="exact source snapshot only: unchanged bf16 shards are hard-linked instead of rebuilt")
     args = ap.parse_args()
     global MTP_DENSE, MTP_EXPERTS, QUANT_PATTERNS
     MTP_DENSE, MTP_EXPERTS = args.mtp_dense, args.mtp_experts
