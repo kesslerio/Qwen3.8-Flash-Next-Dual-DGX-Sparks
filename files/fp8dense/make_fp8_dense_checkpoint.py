@@ -39,6 +39,7 @@ import sys
 import time
 
 import torch
+from checkpoint_links import link_unchanged
 
 FP8 = torch.float8_e4m3fn
 FP8_MAX = float(torch.finfo(FP8).max)  # 448.0
@@ -408,13 +409,7 @@ def main() -> int:
             if not args.dry_run:
                 os.unlink(d)  # stale/dangling entry from an earlier run
         if not args.dry_run:
-            try:
-                os.link(target, d)
-            except OSError as exc:  # e.g. cross-device or protected_hardlinks
-                print(f"  hardlink failed for {f} ({exc}); using symlink", flush=True)
-                os.symlink(target, d)
-            if not os.path.exists(d):
-                raise RuntimeError(f"could not link {f} into {dst}")
+            link_unchanged(target, d)
         linked += 1
     print(f"linked {linked} untouched files ({len(link_names)} expected)", flush=True)
 
@@ -450,7 +445,7 @@ def main() -> int:
             if not args.dry_run:
                 if os.path.lexists(dst_shard):
                     os.unlink(dst_shard)
-                os.link(reuse, dst_shard)
+                link_unchanged(reuse, dst_shard)
             linked_unchanged += 1
             entries = planned
         else:

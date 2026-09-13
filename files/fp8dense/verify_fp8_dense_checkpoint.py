@@ -26,11 +26,14 @@ def main():
     ap.add_argument("--src", required=True)
     ap.add_argument("--dst", required=True)
     ap.add_argument("--samples", type=int, default=6)
+    ap.add_argument("--sample-rows", type=int, default=64,
+                    help="Bound dequantization memory by sampling this many rows per checked tensor")
     ap.add_argument("--replaced-shard-prefix", default=None, metavar="PREFIX",
                     help="source shard files starting with PREFIX were deliberately replaced "
                          "(e.g. model-plefp8- after files/ple_nvfp4): skip their hard-link and "
                          "tensor-presence checks; files/ple_nvfp4/verify_ple_nvfp4_checkpoint.py covers them")
     a = ap.parse_args()
+    if a.sample_rows < 1:ap.error('--sample-rows must be positive')
     replaced = {f for f in set(json.load(open(os.path.join(a.src, "model.safetensors.index.json")))["weight_map"].values())
                 if a.replaced_shard_prefix and f.startswith(a.replaced_shard_prefix)}
     src_idx = json.load(open(os.path.join(a.src, "model.safetensors.index.json")))["weight_map"]
@@ -106,16 +109,18 @@ def main():
                 if samples < a.samples and (checked % 97 == 1):
                     # dequantize and compare against source bf16
                     s0, s1 = info["data_offsets"]; c0, c1 = sc["data_offsets"]
+                    sample_shape = [min(a.sample_rows, info['shape'][0]), info['shape'][1]]
+                    elements = sample_shape[0] * sample_shape[1]
                     with open(os.path.join(a.dst, f), "rb") as fh:
-                        fh.seek(data_start + s0); q = torch.frombuffer(bytearray(fh.read(s1 - s0)), dtype=torch.float8_e4m3fn).view(info["shape"])
-                        fh.seek(data_start + c0); scale = torch.frombuffer(bytearray(fh.read(c1 - c0)), dtype=torch.float32)
+                        fh.seek(data_start + s0); q = torch.frombuffer(bytearray(fh.read(elements)), dtype=torch.float8_e4m3fn).view(sample_shape)
+                        fh.seek(data_start + c0); scale = torch.frombuffer(bytearray(fh.read(sample_shape[0] * 4)), dtype=torch.float32)
                     o0, o1 = src_hdr[name]["data_offsets"]
                     with open(os.path.join(a.src, f), "rb") as fh:
-                        fh.seek(src_start + o0); x = torch.frombuffer(bytearray(fh.read(o1 - o0)), dtype=torch.bfloat16).view(info["shape"]).float()
+                        fh.seek(src_start + o0); x = torch.frombuffer(bytearray(fh.read(elements * 2)), dtype=torch.bfloat16).view(sample_shape).float()
                     deq = q.float() * scale[:, None]
                     rel = ((deq - x).norm() / x.norm()).item()
                     cos = torch.nn.functional.cosine_similarity(deq.flatten(), x.flatten(), dim=0).item()
-                    print(f"sample {name}: rel_err={rel:.4f} cos={cos:.6f} shape={info['shape']}")
+                    print(f"sample {name}: rel_err={rel:.4f} cos={cos:.6f} shape={info['shape']} sampled_rows={sample_shape[0]}")
                     samples += 1
                     if rel > 0.06:
                         print("HIGH ERROR", name); problems += 1
@@ -134,15 +139,17 @@ def main():
         src_hdr, src_start = header(os.path.join(a.src, src_idx[name]))
         info, sc = hdr[name], hdr[lay + ".weight_scale"]
         s0, s1 = info["data_offsets"]; c0, c1 = sc["data_offsets"]
+        sample_shape = [min(a.sample_rows, info['shape'][0]), info['shape'][1]]
+        elements = sample_shape[0] * sample_shape[1]
         with open(os.path.join(a.dst, f), "rb") as fh:
-            fh.seek(data_start + s0); q = torch.frombuffer(bytearray(fh.read(s1 - s0)), dtype=torch.float8_e4m3fn).view(info["shape"])
-            fh.seek(data_start + c0); scale = torch.frombuffer(bytearray(fh.read(c1 - c0)), dtype=torch.float32)
+            fh.seek(data_start + s0); q = torch.frombuffer(bytearray(fh.read(elements)), dtype=torch.float8_e4m3fn).view(sample_shape)
+            fh.seek(data_start + c0); scale = torch.frombuffer(bytearray(fh.read(sample_shape[0] * 4)), dtype=torch.float32)
         o0, o1 = src_hdr[name]["data_offsets"]
         with open(os.path.join(a.src, src_idx[name]), "rb") as fh:
-            fh.seek(src_start + o0); x = torch.frombuffer(bytearray(fh.read(o1 - o0)), dtype=torch.bfloat16).view(info["shape"]).float()
+            fh.seek(src_start + o0); x = torch.frombuffer(bytearray(fh.read(elements * 2)), dtype=torch.bfloat16).view(sample_shape).float()
         deq = q.float() * scale[:, None]
         rel = ((deq - x).norm() / x.norm()).item()
-        print(f"mtp dense {name}: rel_err={rel:.4f} shape={info['shape']}")
+        print(f"mtp dense {name}: rel_err={rel:.4f} shape={info['shape']} sampled_rows={sample_shape[0]}")
         if rel > 0.06:
             print("HIGH ERROR", name); problems += 1
 
