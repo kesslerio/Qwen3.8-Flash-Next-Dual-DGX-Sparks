@@ -60,6 +60,7 @@ def main():
                     'utc': time.time(), 'body_sha256': hashlib.sha256(body).hexdigest(),
                     'model': document.get('model'),
                     'sampling': {k: document.get(k) for k in ('temperature', 'top_p', 'top_k')},
+                    'tool_choice': document.get('tool_choice'),
                     'tool_result_messages': sum(m.get('role') == 'tool' for m in document.get('messages', [])),
                     'injected_503': attempt == 0 and not args.no_fault}
                 observations.append(observation)

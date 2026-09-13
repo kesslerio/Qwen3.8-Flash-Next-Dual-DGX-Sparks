@@ -44,7 +44,7 @@ class ToolLoopTests(unittest.TestCase):
             {'output': '{"field":"cacheReadTokens"}', 'tool_calls': {}}], 6)
         self.assertTrue(result['passed'])
         self.assertEqual(result['model_calls'], 3)
-        self.assertEqual([p['tool_choice'] for p in payloads], ['required', 'auto', 'auto'])
+        self.assertTrue(all('tool_choice' not in p for p in payloads))
         self.assertEqual(len(payloads[-1]['messages']), len(payloads[0]['messages']) + 4)
 
     def test_repeated_read_exhaustion_is_a_failed_task(self):

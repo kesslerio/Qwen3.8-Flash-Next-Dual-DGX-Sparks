@@ -71,7 +71,8 @@ def task(base, case, temperature=0, tool_budget=2, background=None):
     try:
         if case['kind']=='repo':
             p=body('Read '+case['path']+' with read_file, then answer this question as JSON only: '+case['question']+' Use this JSON shape: '+json.dumps({k:None for k in case['expected']}),384)
-            p.update(tools=[TOOL],tool_choice='required')
+            p.update(tools=[TOOL])
+            if tool_budget == 2:p['tool_choice']='required'
             for step in range(tool_budget):
                 r=request(base,p,retain_wire=True);rows.append(r)
                 calls=list(r['tool_calls'].values())
@@ -86,7 +87,7 @@ def task(base, case, temperature=0, tool_budget=2, background=None):
                                   {'role':'tool','tool_call_id':calls[0]['id'],'content':FILES[case['path']]}]
                 # Preserve the original two-call protocol diagnostic. A larger
                 # fixed budget measures natural tool-loop completion and retries.
-                p['tool_choice']='none' if tool_budget == 2 else 'auto'
+                if tool_budget == 2:p['tool_choice']='none'
             else:
                 result['error']='tool budget exhausted'
             result['model_calls']=len(rows)
@@ -126,7 +127,7 @@ def main():
     directory=a.records/(time.strftime('%Y%m%dT%H%M%S',time.gmtime())+'-'+a.profile+'-tasks-'+uuid.uuid4().hex[:8]);directory.mkdir(parents=True)
     for name in ('task_qualification.py','qualification.py'):
         (directory/name).write_bytes(Path(__file__).with_name(name).read_bytes())
-    (directory/'manifest.json').write_text(json.dumps({'profile':a.profile,'suite':'tasks','fixtures_sha256':digest({'cases':cases,'files':FILES}),'case_ids':[case['id'] for case in cases],'repeats':a.repeats,'concurrencies':a.concurrencies,'temperature':a.temperature,'tool_budget':a.tool_budget,'background_sha256':{size:digest(text) for size,text in backgrounds.items()}},indent=2))
+    (directory/'manifest.json').write_text(json.dumps({'profile':a.profile,'suite':'tasks','fixtures_sha256':digest({'cases':cases,'files':FILES}),'case_ids':[case['id'] for case in cases],'tool_mode':'required-then-none' if a.tool_budget==2 else 'native-auto','repeats':a.repeats,'concurrencies':a.concurrencies,'temperature':a.temperature,'tool_budget':a.tool_budget,'background_sha256':{size:digest(text) for size,text in backgrounds.items()}},indent=2))
     print('RUN_DIRECTORY='+str(directory),flush=True)
     for repeat in range(a.repeats):
         for c in map(int,a.concurrencies.split(',')):
