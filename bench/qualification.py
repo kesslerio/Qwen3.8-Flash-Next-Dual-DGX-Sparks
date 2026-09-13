@@ -48,7 +48,9 @@ def metrics(base):
             continue
         name = line.split('{')[0].split()[0]
         if name in ('vllm:num_requests_running', 'vllm:num_requests_waiting',
-                    'vllm:generation_tokens_total', 'vllm:num_preemptions_total'):
+                    'vllm:generation_tokens_total', 'vllm:num_preemptions_total',
+                    'vllm:spec_decode_num_drafts_total', 'vllm:spec_decode_num_draft_tokens_total',
+                    'vllm:spec_decode_num_accepted_tokens_total'):
             values[name] = values.get(name, 0) + float(line.rsplit(' ', 1)[1])
     required = ('vllm:num_requests_running', 'vllm:num_requests_waiting', 'vllm:generation_tokens_total', 'vllm:num_preemptions_total')
     if not all(k in values for k in required):

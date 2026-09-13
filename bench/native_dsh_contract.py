@@ -11,6 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import threading
 import time
@@ -27,6 +28,7 @@ def main():
     parser.add_argument('--records', type=Path, required=True)
     parser.add_argument('--profile', required=True)
     parser.add_argument('--dsh', default='/Users/kesslerio/.local/bin/dsh')
+    parser.add_argument('--dsh-config', type=Path, default=Path.home()/'.dsh/profiles/headless/cordis.patch.yml')
     args = parser.parse_args()
     os.umask(0o077)
     directory = args.records / (time.strftime('%Y%m%dT%H%M%S', time.gmtime()) + '-' + args.profile + '-native-dsh-' + uuid.uuid4().hex[:8])
@@ -88,13 +90,29 @@ def main():
 
     server = ThreadingHTTPServer(('127.0.0.1', 0), Proxy)
     overlay = directory / 'native-route.patch.yml'
+    settings = directory / 'native-settings.json'
+    # A saved global default can override the profile's model. Select Qwen only
+    # for this isolated invocation; never rewrite the user's saved selection.
+    settings.write_text(json.dumps({'agent-default-model': {'provider':'john-remote','model':'qwen3.8-flash-next'}}))
+    # DSH replaces this provider entry when applying an overlay. Carry the
+    # complete existing route so models, timeouts, sampling and retry policy
+    # retain their actual client settings.
+    lines=args.dsh_config.read_text().splitlines()
+    start=lines.index('      john-remote:')
+    end=next((i for i in range(start+1,len(lines)) if re.match(r'^      [^ #]',lines[i])),len(lines))
+    route='\n'.join(lines[start:end])+'\n'
+    if re.search(r'^\s*(apiKey|token|password)\s*:',route,re.M):
+        raise ValueError('Native route must reference credentials through an environment variable')
+    route,count=re.subn(r'^        baseURL:.*$',f'        baseURL: "http://127.0.0.1:{server.server_port}/v1"',route,flags=re.M)
+    if count!=1:raise ValueError('Expected exactly one route endpoint')
     overlay.write_text('- id: agent-default-model\n  config:\n    provider: john-remote\n    model: qwen3.8-flash-next\n'
-        '- id: llm-pi-ai\n  config:\n    providers:\n      john-remote:\n'
-        f'        baseURL: "http://127.0.0.1:{server.server_port}/v1"\n')
+        '- id: llm-pi-ai\n  config:\n    providers:\n'+route+
+        '- id: settings\n  config:\n    watch: false\n    path: '+json.dumps(str(settings))+'\n')
     question = f'Read only the file {fixture} using your file-reading or shell tool. Do not modify files, browse, or delegate. Reply with exactly the single line contained in that file.'
     command = [args.dsh, '--profile', 'headless', '--patch', str(overlay), question]
     (directory / 'manifest.json').write_text(json.dumps({'profile': args.profile, 'suite': 'native-dsh-contract',
         'command': command, 'fixture_sha256': hashlib.sha256(fixture.read_bytes()).hexdigest(),
+        'client_config_sha256': hashlib.sha256(args.dsh_config.read_bytes()).hexdigest(),
         'injected_fault': 'first HTTP request receives 503, later requests reach the existing API'}, indent=2))
     print('RUN_DIRECTORY=' + str(directory), flush=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
@@ -109,9 +127,9 @@ def main():
         passed = result.returncode == 0 and output.strip() == marker and len(observations) >= 3 and any(o['tool_result_messages'] for o in observations)
         append(events, {'event': 'assertion', 'label': 'native-tool-and-503-retry', 'passed': passed,
             'exit_code': result.returncode, 'requests': len(observations), 'after': after})
-        append(events, {'event': 'run_finish', 'status': 'complete' if passed else 'failed', 'utc': time.time()})
         if not passed:
             raise RuntimeError('Native DSH compatibility failed; evidence retained')
+        append(events, {'event': 'run_finish', 'status': 'complete', 'utc': time.time()})
     except Exception as error:
         append(events, {'event': 'run_finish', 'status': 'failed', 'error': type(error).__name__, 'utc': time.time()})
         raise
