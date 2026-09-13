@@ -28,6 +28,7 @@ def main():
     parser.add_argument('--records', type=Path, required=True)
     parser.add_argument('--profile', required=True)
     parser.add_argument('--dsh', default='/Users/kesslerio/.local/bin/dsh')
+    parser.add_argument('--dsh-source', type=Path, default=Path('/Users/kesslerio/projects/tools/deepseek-harness'))
     parser.add_argument('--dsh-config', type=Path, default=Path.home()/'.dsh/profiles/headless/cordis.patch.yml')
     parser.add_argument('--fixture-run', type=Path, help='Reuse a prior native run fixture and its exact task path')
     parser.add_argument('--no-fault', action='store_true', help='Measure ordinary native task completion without injected 503')
@@ -123,8 +124,11 @@ def main():
         '- id: settings\n  config:\n    watch: false\n    path: '+json.dumps(str(settings))+'\n')
     question = f'Read only the file {fixture} using your file-reading or shell tool. Do not modify files, browse, or delegate. Reply with exactly the single line contained in that file.'
     command = [args.dsh, '--profile', 'headless', '--patch', str(overlay), question]
+    client_revision = subprocess.check_output(['git','-C',str(args.dsh_source),'rev-parse','HEAD'],text=True).strip()
     (directory / 'manifest.json').write_text(json.dumps({'profile': args.profile, 'suite': 'native-dsh-contract',
         'command': command, 'fixture_sha256': hashlib.sha256(fixture.read_bytes()).hexdigest(),
+        'client_revision':client_revision,'client_launcher_sha256':hashlib.sha256(Path(args.dsh).read_bytes()).hexdigest(),
+        'task_sha256':hashlib.sha256(question.encode()).hexdigest(),
         'client_config_sha256': hashlib.sha256(args.dsh_config.read_bytes()).hexdigest(),
         'fixture_source':str(fixture),
         'injected_fault': 'none' if args.no_fault else 'first HTTP request receives 503, later requests reach the existing API'}, indent=2))
