@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 import uuid
 
-from qualification import append, idle
+from qualification import append, idle, metrics
 
 
 def main():
@@ -29,6 +29,9 @@ def main():
     parser.add_argument('--profile', required=True)
     parser.add_argument('--dsh', default='/Users/kesslerio/.local/bin/dsh')
     parser.add_argument('--dsh-config', type=Path, default=Path.home()/'.dsh/profiles/headless/cordis.patch.yml')
+    parser.add_argument('--fixture-run', type=Path, help='Reuse a prior native run fixture and its exact task path')
+    parser.add_argument('--no-fault', action='store_true', help='Measure ordinary native task completion without injected 503')
+    parser.add_argument('--coordinated', action='store_true', help='Parent wave owns idle checks and traffic attribution')
     args = parser.parse_args()
     os.umask(0o077)
     directory = args.records / (time.strftime('%Y%m%dT%H%M%S', time.gmtime()) + '-' + args.profile + '-native-dsh-' + uuid.uuid4().hex[:8])
@@ -36,9 +39,10 @@ def main():
     events = directory / 'events.jsonl'
     (directory / Path(__file__).name).write_bytes(Path(__file__).read_bytes())
     (directory / 'qualification.py').write_bytes(Path(__file__).with_name('qualification.py').read_bytes())
-    marker = 'QWEN_NATIVE_' + uuid.uuid4().hex
-    fixture = directory / 'read-only-fixture.txt'
-    fixture.write_text(marker + '\n')
+    prior = json.loads((args.fixture_run/'manifest.json').read_text()) if args.fixture_run else {}
+    fixture = Path(prior.get('fixture_source', str((args.fixture_run or directory)/'read-only-fixture.txt')))
+    marker = fixture.read_text().strip() if args.fixture_run else 'QWEN_NATIVE_' + uuid.uuid4().hex
+    (directory/'read-only-fixture.txt').write_text(marker + '\n')
     lock = threading.Lock()
     observations = []
 
@@ -56,10 +60,10 @@ def main():
                     'model': document.get('model'),
                     'sampling': {k: document.get(k) for k in ('temperature', 'top_p', 'top_k')},
                     'tool_result_messages': sum(m.get('role') == 'tool' for m in document.get('messages', [])),
-                    'injected_503': attempt == 0}
+                    'injected_503': attempt == 0 and not args.no_fault}
                 observations.append(observation)
                 append(events, observation)
-            if attempt == 0:
+            if attempt == 0 and not args.no_fault:
                 payload = b'{"error":{"message":"Controlled qualification retry fixture","type":"server_error"}}'
                 self.send_response(503)
                 self.send_header('Content-Type', 'application/json')
@@ -74,13 +78,22 @@ def main():
             request = urllib.request.Request(args.base.rstrip('/') + self.path,
                 data=body, headers={'Content-Type': 'application/json'})
             try:
+                started=time.monotonic();usage=None;response_id=None
                 with urllib.request.urlopen(request, timeout=600) as response:
+                    is_sse='text/event-stream' in response.headers.get('Content-Type','')
+                    nonstream=bytearray()
                     self.send_response(response.status)
                     self.send_header('Content-Type', response.headers.get('Content-Type', 'text/event-stream'))
                     self.end_headers()
                     for line in response:
+                        if not is_sse:nonstream.extend(line)
+                        if line.startswith(b'data:') and line[5:].strip() != b'[DONE]':
+                            event=json.loads(line[5:]);usage=event.get('usage') or usage;response_id=event.get('id') or response_id
                         self.wfile.write(line)
                         self.wfile.flush()
+                    if nonstream:
+                        event=json.loads(nonstream);usage=event.get('usage');response_id=event.get('id')
+                append(events, {'event':'proxy_response','attempt':attempt,'usage':usage,'response_id':response_id,'elapsed_s':time.monotonic()-started})
             except (BrokenPipeError, ConnectionResetError):
                 append(events, {'event': 'proxy_client_closed', 'attempt': attempt})
             except urllib.error.HTTPError as error:
@@ -113,20 +126,23 @@ def main():
     (directory / 'manifest.json').write_text(json.dumps({'profile': args.profile, 'suite': 'native-dsh-contract',
         'command': command, 'fixture_sha256': hashlib.sha256(fixture.read_bytes()).hexdigest(),
         'client_config_sha256': hashlib.sha256(args.dsh_config.read_bytes()).hexdigest(),
-        'injected_fault': 'first HTTP request receives 503, later requests reach the existing API'}, indent=2))
+        'fixture_source':str(fixture),
+        'injected_fault': 'none' if args.no_fault else 'first HTTP request receives 503, later requests reach the existing API'}, indent=2))
     print('RUN_DIRECTORY=' + str(directory), flush=True)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        before = idle(args.base)
+        before = metrics(args.base) if args.coordinated else idle(args.base)
         append(events, {'event': 'run_start', 'utc': time.time(), 'before': before})
+        task_started=time.monotonic()
         with (directory / 'stdout.txt').open('w') as stdout, (directory / 'stderr.txt').open('w') as stderr:
             result = subprocess.run(command, stdout=stdout, stderr=stderr, timeout=600)
-        after = idle(args.base)
+        task_elapsed=time.monotonic()-task_started
+        after = metrics(args.base) if args.coordinated else idle(args.base)
         output = (directory / 'stdout.txt').read_text()
-        passed = result.returncode == 0 and output.strip() == marker and len(observations) >= 3 and any(o['tool_result_messages'] for o in observations)
-        append(events, {'event': 'assertion', 'label': 'native-tool-and-503-retry', 'passed': passed,
-            'exit_code': result.returncode, 'requests': len(observations), 'after': after})
+        passed = result.returncode == 0 and output.strip() == marker and len(observations) >= (2 if args.no_fault else 3) and any(o['tool_result_messages'] for o in observations)
+        append(events, {'event': 'assertion', 'label': 'native-tool' if args.no_fault else 'native-tool-and-503-retry', 'passed': passed,
+            'exit_code': result.returncode, 'requests': len(observations), 'after': after, 'task_elapsed_s':task_elapsed,'includes_cli_startup':True,'fault_injected':not args.no_fault})
         if not passed:
             raise RuntimeError('Native DSH compatibility failed; evidence retained')
         append(events, {'event': 'run_finish', 'status': 'complete', 'utc': time.time()})
