@@ -131,7 +131,7 @@ def main():
     for repeat in range(a.repeats):
         for c in map(int,a.concurrencies.split(',')):
             before=idle(a.base)
-            append(directory/'events.jsonl',{'event':'wave_start','repeat':repeat,'concurrency':c,'before':before})
+            append(directory/'events.jsonl',{'event':'wave_start','utc':time.time(),'repeat':repeat,'concurrency':c,'before':before})
             with concurrent.futures.ThreadPoolExecutor(max_workers=c) as pool:
                 futures=[pool.submit(task,a.base,case,a.temperature,a.tool_budget,backgrounds.get(128000 if case['kind']=='synthesis' else 32000)) for case in cases]
                 rows=[]
