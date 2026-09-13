@@ -49,7 +49,7 @@ def main():
         elapsed=time.monotonic()-started;after=idle(a.base)
         responses=[r for c in children for r in c['responses']]
         expected=sum((r.get('usage') or {}).get('completion_tokens',0) for r in responses)
-        valid=bool(responses) and all(r.get('usage') for r in responses) and after['vllm:generation_tokens_total']-before['vllm:generation_tokens_total']==expected
+        valid=bool(responses) and all(r.get('usage') for r in responses) and after['vllm:generation_tokens_total']-before['vllm:generation_tokens_total']==expected and after['vllm:num_preemptions_total']==before['vllm:num_preemptions_total']
         passed=sum(c['exit_code']==0 and bool(c['assertions']) and all(r['passed'] for r in c['assertions']) for c in children)
         append(directory/'events.jsonl',{'event':'native_wave','valid':bool(valid),'passed':passed,'total':len(children),
             'shared_wall_s':elapsed,'generation_counter_delta':after['vllm:generation_tokens_total']-before['vllm:generation_tokens_total'],

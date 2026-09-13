@@ -140,9 +140,11 @@ def main():
         task_elapsed=time.monotonic()-task_started
         after = metrics(args.base) if args.coordinated else idle(args.base)
         output = (directory / 'stdout.txt').read_text()
-        passed = result.returncode == 0 and output.strip() == marker and len(observations) >= (2 if args.no_fault else 3) and any(o['tool_result_messages'] for o in observations)
+        exact_retry = args.no_fault or bool(observations) and any(
+            o['body_sha256'] == observations[0]['body_sha256'] for o in observations[1:])
+        passed = result.returncode == 0 and output.strip() == marker and exact_retry and len(observations) >= (2 if args.no_fault else 3) and any(o['tool_result_messages'] for o in observations)
         append(events, {'event': 'assertion', 'label': 'native-tool' if args.no_fault else 'native-tool-and-503-retry', 'passed': passed,
-            'exit_code': result.returncode, 'requests': len(observations), 'after': after, 'task_elapsed_s':task_elapsed,'includes_cli_startup':True,'fault_injected':not args.no_fault})
+            'exit_code': result.returncode, 'requests': len(observations), 'after': after, 'task_elapsed_s':task_elapsed,'includes_cli_startup':True,'fault_injected':not args.no_fault,'exact_retry':exact_retry if not args.no_fault else None})
         if not passed:
             raise RuntimeError('Native DSH compatibility failed; evidence retained')
         append(events, {'event': 'run_finish', 'status': 'complete', 'utc': time.time()})
