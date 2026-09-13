@@ -20,6 +20,14 @@ def read_response():
 
 
 class ToolLoopTests(unittest.TestCase):
+    def test_data_getattr_fallback_is_valid_but_private_lookup_is_blocked(self):
+        good="def candidate(usage):\n    a = usage.get('inputTokens') if isinstance(usage, dict) else getattr(usage, 'inputTokens', None)\n    b = usage.get('cacheReadTokens') if isinstance(usage, dict) else getattr(usage, 'cacheReadTokens', None)\n    return None if a is None or b is None else a + b"
+        bad="def candidate(usage):\n    return getattr(usage, '__class__', None)"
+        for code,expected in ((good,0),(bad,1)):
+            result=subprocess.run([sys.executable,'-I','-c',runner.SANDBOX],
+                input=json.dumps({'code':code,'tests':runner.CASES[4]['tests']}),capture_output=True,text=True,timeout=3)
+            self.assertEqual(result.returncode,expected,result.stderr)
+
     def test_valid_type_guard_is_executable(self):
         code = "def candidate(usage):\n    if not isinstance(usage, dict): return None\n    a, b = usage.get('inputTokens'), usage.get('cacheReadTokens')\n    return None if a is None or b is None else a + b"
         result = subprocess.run([sys.executable, '-I', '-c', runner.SANDBOX],

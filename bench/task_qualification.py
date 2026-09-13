@@ -40,7 +40,7 @@ TOOL = {'type':'function','function':{'name':'read_file','description':'Read a r
 SANDBOX = '''
 import ast,json,sys
 d=json.load(sys.stdin);code=d['code'];tree=ast.parse(code)
-allowed_calls={'candidate','len','range','sum','min','max','list','dict','sorted','enumerate','zip','bool','isinstance','int','float','str','tuple','set','abs','all','any'}
+allowed_calls={'candidate','len','range','sum','min','max','list','dict','sorted','enumerate','zip','bool','isinstance','int','float','str','tuple','set','abs','all','any','getattr'}
 for n in ast.walk(tree):
  if isinstance(n,(ast.Import,ast.ImportFrom,ast.ClassDef,ast.With,ast.AsyncFunctionDef,ast.Global,ast.Nonlocal,ast.Lambda)):
   raise ValueError('unsupported syntax')
@@ -48,6 +48,10 @@ for n in ast.walk(tree):
  if isinstance(n,ast.Attribute) and n.attr not in ('get','append'):raise ValueError('attribute')
  if isinstance(n,ast.Call) and not ((isinstance(n.func,ast.Name) and n.func.id in allowed_calls) or (isinstance(n.func,ast.Attribute) and n.func.attr in ('get','append'))):raise ValueError('call')
 ns={'__builtins__':{k:__builtins__.__dict__[k] for k in allowed_calls if k!='candidate'}}
+def data_getattr(obj,name,default=None):
+ if name not in ('inputTokens','cacheReadTokens'):raise ValueError('attribute')
+ return getattr(obj,name,default)
+ns['__builtins__']['getattr']=data_getattr
 exec(compile(tree,'<candidate>','exec'),ns)
 assert all(ns['candidate'](*args)==expected for args,expected in d['tests'])
 print('passed')

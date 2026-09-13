@@ -50,7 +50,7 @@ def main():
             for filename in ('regrade_repairs.py', 'task_qualification.py'):
                 (directory / filename).write_bytes(Path(__file__).with_name(filename).read_bytes())
             report = {'utc': time.time(), 'kind': 'offline-repair-checker-recheck',
-                'reason': 'Checker now permits safe standard built-ins, including isinstance; no model requests were rerun.',
+                'reason': 'Checker permits standard type guards and restricted access to the two usage-count attributes; no model requests were rerun.',
                 'original_events_sha256': hashlib.sha256(events.read_bytes()).hexdigest(),
                 'checker_sha256': hashlib.sha256(SANDBOX.encode()).hexdigest(), 'changes': changes}
             (directory / 'report.json').write_text(json.dumps(report, indent=2) + '\n')
