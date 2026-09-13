@@ -1,0 +1,9 @@
+{
+  "id": "kv24-b4096",
+  "mtp_tokens": 3,
+  "extra_env": {
+    "VLLM_QUALIFICATION_DEFAULT_SAMPLING": "{\"temperature\": 1.0, \"top_k\": 20, \"top_p\": 0.95}"
+  },
+  "kv_cache_memory_bytes": 24000000000,
+  "max_num_batched_tokens": 4096
+}

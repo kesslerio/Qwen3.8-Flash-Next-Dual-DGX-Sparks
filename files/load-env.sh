@@ -8,5 +8,11 @@ if [[ -n "${QWEN_PROFILE:-}" ]]; then
     fi
     source "$SCRIPT_DIR/deploy/profiles/nvfp4-common.env" || return 1
     source "$SCRIPT_DIR/deploy/profiles/$QWEN_PROFILE.env" || return 1
-    case "${QWEN_MTP_TOKENS:-3}" in 0|1|2|3) MTP_NUM_SPECULATIVE_TOKENS="${QWEN_MTP_TOKENS:-3}" ;; *) echo "MTP comparison supports 0, 1, 2, or 3" >&2; return 1 ;; esac
+    case "${QWEN_MTP_TOKENS:-3}" in 0|1|2|3|4) MTP_NUM_SPECULATIVE_TOKENS="${QWEN_MTP_TOKENS:-3}" ;; *) echo "MTP comparison supports 0 through 4" >&2; return 1 ;; esac
+fi
+if [[ -n "${QWEN_TUNING_FILE:-}" ]]; then
+    [[ "${QWEN_PROFILE:-}" == "nvfp4-native" ]] || { echo 'Tuning requires native profile' >&2; return 1; }
+    _qwen_tuning=$(python3 "$SCRIPT_DIR/files/tuning_config.py" "$QWEN_TUNING_FILE") || return 1
+    eval "$_qwen_tuning"
+    unset _qwen_tuning
 fi

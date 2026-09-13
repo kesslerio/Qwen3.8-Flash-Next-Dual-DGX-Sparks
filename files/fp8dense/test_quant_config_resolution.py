@@ -3,6 +3,7 @@
 kind of layer prefix in the hybrid checkpoint. Run inside the image with the overlay
 modelopt.py bind-mounted and CUDA_VISIBLE_DEVICES="".
 """
+import argparse
 import json
 import sys
 
@@ -12,7 +13,14 @@ from vllm.model_executor.layers.quantization.modelopt import (
 )
 from vllm.model_executor.models.utils import WeightsMapper
 
-cfg_path = sys.argv[1]
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument('config')
+parser.add_argument('--draft-only', action='store_true')
+parser.add_argument('--mtp-dense', action='store_true')
+args = parser.parse_args()
+if args.draft_only and not args.mtp_dense:
+    parser.error('--draft-only requires --mtp-dense')
+cfg_path = args.config
 qc = json.load(open(cfg_path))["quantization_config"]
 assert ModelOptMixedPrecisionConfig.override_quantization_method(qc, None) == "modelopt_mixed"
 cfg = ModelOptMixedPrecisionConfig.from_config(qc)
@@ -76,6 +84,21 @@ expect_causal = {  # text-only entry point / draft model spellings
     "mtp.hyper_connection_mixer.input_mix_weight_down": "EXCLUDED",
     "mtp.fc_hidden": "EXCLUDED",
 }
+if args.draft_only:
+    # Unchanged target dense tensors must retain the unquantized dispatch even
+    # though the draft adds per-channel FP8 to the mixed-precision metadata.
+    for table in (expect, expect_causal):
+        for prefix, value in list(table.items()):
+            if value == 'FP8_PER_CHANNEL_PER_TOKEN':
+                table[prefix] = 'UNQUANTIZED'
+if args.mtp_dense:
+    for prefix in (
+        'mtp.layers.48.self_attn.qkv_proj',
+        'mtp.layers.48.attn_hyper_connection.input_mix_weight_down_block_inject',
+        'mtp.hyper_connection_mixer.input_mix_weight_down',
+        'mtp.fc_hidden',
+    ):
+        expect_causal[prefix] = 'FP8_PER_CHANNEL_PER_TOKEN'
 bad = 0
 for mapper, table, label in ((cond_gen_mapper, expect, "ConditionalGeneration"), (causal_lm_mapper, expect_causal, "CausalLM/MTP")):
     c = ModelOptMixedPrecisionConfig.from_config(qc)

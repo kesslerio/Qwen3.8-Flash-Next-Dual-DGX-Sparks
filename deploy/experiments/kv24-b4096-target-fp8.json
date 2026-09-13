@@ -1,0 +1,15 @@
+{
+  "id": "kv24-b4096-target-fp8",
+  "mtp_tokens": 3,
+  "extra_env": {
+    "VLLM_QUALIFICATION_DEFAULT_SAMPLING": "{\"temperature\": 1.0, \"top_k\": 20, \"top_p\": 0.95}"
+  },
+  "kv_cache_memory_bytes": 24000000000,
+  "max_num_batched_tokens": 4096,
+  "derived_checkpoint": {
+    "model_id": "kesslerio/Qwen3.8-Flash-Next-DenseFP8",
+    "revision": "98c266a39874725c6fe85e60f03a2f4f1252db33",
+    "kind": "target-fp8",
+    "manifest": "/home/kesslerio/.cache/huggingface/hub/models--kesslerio--Qwen3.8-Flash-Next-DenseFP8/inventory-98c266a39874725c6fe85e60f03a2f4f1252db33.json"
+  }
+}
