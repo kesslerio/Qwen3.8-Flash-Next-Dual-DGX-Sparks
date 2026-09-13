@@ -65,7 +65,7 @@ def json_answer(text):
     return json.loads(text)
 
 def task(base, case, temperature=0, tool_budget=2, background=None):
-    start=time.monotonic(); rows=[]; result={'case':case['id'],'passed':False}
+    start=time.monotonic(); rows=[]; result={'case':case['id'],'passed':False,'started_utc':time.time()}
     cache_salt = uuid.uuid4().hex + uuid.uuid4().hex
     def body(question, maximum):
         p = payload(question, maximum, temperature)
@@ -138,6 +138,7 @@ def main():
     for repeat in range(a.repeats):
         for c in map(int,a.concurrencies.split(',')):
             before=idle(a.base)
+            wave_started=time.monotonic()
             append(directory/'events.jsonl',{'event':'wave_start','utc':time.time(),'repeat':repeat,'concurrency':c,'before':before})
             with concurrent.futures.ThreadPoolExecutor(max_workers=c) as pool:
                 futures=[pool.submit(task,a.base,case,a.temperature,a.tool_budget,backgrounds.get(128000 if case['kind']=='synthesis' else 32000)) for case in cases]
@@ -145,12 +146,13 @@ def main():
                 for future in concurrent.futures.as_completed(futures):
                     row=future.result();rows.append(row)
                     append(directory/'events.jsonl',{'event':'task_result','repeat':repeat,'concurrency':c,**row})
+            shared_wall_s=time.monotonic()-wave_started
             after=idle(a.base)
             total=sum((r['usage'] or {}).get('completion_tokens',0) for t in rows for r in t['requests'])
             delta=after['vllm:generation_tokens_total']-before['vllm:generation_tokens_total']
             preemptions=after['vllm:num_preemptions_total']-before['vllm:num_preemptions_total']
             valid=delta==total and preemptions==0 and all(not r.get('error') for t in rows for r in t['requests'])
-            result={'event':'task_wave','repeat':repeat,'concurrency':c,'valid':valid,'generation_counter_delta':delta,'completion_tokens':total,'preemption_delta':preemptions,'after':after,'passed':sum(t['passed'] for t in rows),'total':len(rows),'tasks':rows}
+            result={'event':'task_wave','repeat':repeat,'concurrency':c,'valid':valid,'generation_counter_delta':delta,'completion_tokens':total,'preemption_delta':preemptions,'after':after,'shared_wall_s':shared_wall_s,'passed':sum(t['passed'] for t in rows),'total':len(rows),'tasks':rows}
             append(directory/'events.jsonl',result);print(json.dumps({k:v for k,v in result.items() if k!='tasks'}),flush=True)
             if not valid:
                 append(directory/'events.jsonl',{'event':'run_finish','status':'invalid'})
