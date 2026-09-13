@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 import uuid
+import qualification
 from qualification import append, digest, idle, request, payload
 
 FILES = {
@@ -129,6 +130,7 @@ def main():
     cases=[case for case in CASES if case['id'] in requested]
     backgrounds = {size:(a.context_fixtures/f'context-{size}.txt').read_text() for size in (32000,128000)} if a.context_fixtures else {}
     directory=a.records/(time.strftime('%Y%m%dT%H%M%S',time.gmtime())+'-'+a.profile+'-tasks-'+uuid.uuid4().hex[:8]);directory.mkdir(parents=True)
+    qualification.AUDIT_PATH=directory/'request-audit.jsonl'
     for name in ('task_qualification.py','qualification.py'):
         (directory/name).write_bytes(Path(__file__).with_name(name).read_bytes())
     (directory/'manifest.json').write_text(json.dumps({'profile':a.profile,'suite':'tasks','fixtures_sha256':digest({'cases':cases,'files':FILES}),'case_ids':[case['id'] for case in cases],'tool_mode':'required-then-none' if a.tool_budget==2 else 'native-auto','repeats':a.repeats,'concurrencies':a.concurrencies,'temperature':a.temperature,'tool_budget':a.tool_budget,'background_sha256':{size:digest(text) for size,text in backgrounds.items()}},indent=2))

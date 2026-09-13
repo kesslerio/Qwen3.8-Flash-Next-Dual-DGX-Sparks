@@ -19,6 +19,7 @@ import uuid
 
 MODEL = 'qwen3.8-flash-next'
 RECORD_LOCK = threading.Lock()
+AUDIT_PATH = None
 PROMPTS = {
     'prose': 'Explain hash maps in detailed prose, including collisions, load factors, open addressing, resizing and concrete tradeoffs. Aim for 1000 words.',
     'code': 'Implement a complete Python LRU cache with get, put, bounded capacity and tests. Explain its concurrency and complexity tradeoffs in comments.',
@@ -72,6 +73,9 @@ def request(base, payload, progress=None, retain_wire=False):
     start = time.monotonic()
     row = {'started_utc': time.time(), 'start': start, 'payload_sha256': digest(payload),
            'usage': None, 'first': None, 'last': None, 'finish': None, 'output': '', 'gaps_s': [], 'tool_calls': {}}
+    audit_id=uuid.uuid4().hex
+    if AUDIT_PATH:
+        append(AUDIT_PATH,{'event':'request_start','audit_id':audit_id,'utc':row['started_utc'],'payload_sha256':row['payload_sha256']})
     if retain_wire:
         row['wire_events'] = []
     try:
@@ -84,6 +88,8 @@ def request(base, payload, progress=None, retain_wire=False):
                     break
                 event = json.loads(data)
                 if event.get('id'):
+                    if AUDIT_PATH and 'response_id' not in row:
+                        append(AUDIT_PATH,{'event':'response_identity','audit_id':audit_id,'utc':time.time(),'response_id':event['id']})
                     row['response_id'] = event['id']
                 if retain_wire:
                     row['wire_events'].append(event)
@@ -120,6 +126,9 @@ def request(base, payload, progress=None, retain_wire=False):
     n = (row['usage'] or {}).get('completion_tokens')
     row['decode_tps_approx'] = (n - 1) / (row['last'] - row['first']) if n and row['last'] and row['last'] > row['first'] else None
     row['max_progress_gap_s'] = max(row['gaps_s'], default=0)
+    if AUDIT_PATH:
+        append(AUDIT_PATH,{'event':'request_end','audit_id':audit_id,'utc':time.time(),
+            **{k:row.get(k) for k in ('response_id','elapsed_s','ttft_s','usage','finish','error')}})
     return row
 
 def payload(prompt, tokens=800, temperature=0, fixed=False):
@@ -209,6 +218,8 @@ def main():
     os.umask(0o077)
     directory = args.records / (time.strftime('%Y%m%dT%H%M%S', time.gmtime()) + '-' + args.profile + '-' + uuid.uuid4().hex[:8])
     directory.mkdir(parents=True)
+    global AUDIT_PATH
+    AUDIT_PATH=directory/'request-audit.jsonl'
     (directory / 'qualification-source.py').write_bytes(Path(__file__).read_bytes())
     manifest = {'schema': 1, 'run_id': directory.name, 'profile': args.profile, 'suite': args.suite,
                 'script_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
