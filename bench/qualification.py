@@ -74,6 +74,7 @@ def request(base, payload, progress=None, retain_wire=False):
     row = {'started_utc': time.time(), 'start': start, 'payload_sha256': digest(payload),
            'usage': None, 'first': None, 'last': None, 'finish': None, 'output': '', 'gaps_s': [], 'tool_calls': {}}
     audit_id=uuid.uuid4().hex
+    row['audit_id']=audit_id
     if AUDIT_PATH:
         append(AUDIT_PATH,{'event':'request_start','audit_id':audit_id,'utc':row['started_utc'],'payload_sha256':row['payload_sha256']})
     if retain_wire:
