@@ -38,3 +38,26 @@ class PreflightTests(unittest.TestCase):
     def test_agreed_valid_input_continues(self):self.exercise()
     def test_missing_shard_fields_still_joins_agreement(self):self.exercise(bad_shard=True)
     def test_overlapping_shards_fail_before_slicing(self):self.exercise(overlapping=True)
+
+    def test_slice_allocation_failure_joins_second_agreement(self):
+        calls=[]
+        def gather(states,state,**kwargs):
+            calls.append(state)
+            remote=dict(state,shard=[50,100]) if 'shard' in state else {'ok':True}
+            states[:]=[state,remote]
+        def allocation(*args,**kwargs):raise MemoryError('simulated local allocation failure')
+        group=NS(world_size=2,cpu_group=object())
+        torch=NS(bfloat16='bf16',float16='f16',float32='f32',long='long',tensor=allocation,
+                 distributed=NS(all_gather_object=gather))
+        weight=NS(dim=lambda:2,shape=[50,8],dtype='bf16',device='cpu')
+        model=NS(lm_head=NS(weight=weight,org_vocab_size=100,tp_size=2,
+                           shard_indices=NS(org_vocab_start_index=0,org_vocab_end_index=50)),
+                 logits_processor=NS(scale=1))
+        source=m.DRAFT_VOCAB_BLOCK.split('    # Optional draft-head STORAGE balancing')[0]+'    return True\n'
+        env={'nn':NS(Module=object),'torch':torch,'os':m.os};exec(source,env)
+        with tempfile.NamedTemporaryFile(mode='w') as f:
+            f.write('1\n2\n3\n');f.flush()
+            with patch.dict('sys.modules',{'vllm.distributed':NS(get_tp_group=lambda:group)}),patch.dict(m.os.environ,{'VLLM_MTP_DRAFT_VOCAB':f.name}):
+                with self.assertRaisesRegex(RuntimeError,'slice allocation failed'):
+                    env['_attach_draft_vocab'](model)
+        self.assertEqual(len(calls),2)
