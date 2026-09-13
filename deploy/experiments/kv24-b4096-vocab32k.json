@@ -1,0 +1,12 @@
+{
+  "id": "kv24-b4096-vocab32k",
+  "mtp_tokens": 3,
+  "extra_env": {
+    "VLLM_QUALIFICATION_DEFAULT_SAMPLING": "{\"temperature\": 1.0, \"top_k\": 20, \"top_p\": 0.95}",
+    "VLLM_MTP_DRAFT_VOCAB_BALANCE": "1"
+  },
+  "kv_cache_memory_bytes": 24000000000,
+  "max_num_batched_tokens": 4096,
+  "draft_sample_method": "greedy",
+  "draft_vocab": "/home/kesslerio/qwen-qualification-assets/draft-vocab-45a3eefd52833685.txt"
+}

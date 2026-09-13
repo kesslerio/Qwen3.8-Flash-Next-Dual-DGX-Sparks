@@ -14,9 +14,9 @@ engine step, ~2.4 GiB of the ~9.2 GiB a single-stream step moves per GPU.
 Draft sampling is greedy (the speculator only builds draft_logits for the
 "probabilistic" method), so the drafter needs an argmax and nothing else. An
 argmax over a frequency-ranked subset is wrong only for tokens outside the
-subset, and a wrong draft is *rejected by the target model at verification*,
-exactly like any other bad draft. This trades acceptance for bandwidth and
-cannot change what the server emits.
+subset. Correct rejection sampling preserves the target distribution while
+trading proposal acceptance for bandwidth. Proposal changes consume randomness
+differently, so fixed seeds do not promise identical generated sequences.
 
 The reduced head is reached only through get_top_tokens, which the speculator
 calls when use_local_argmax_reduction is set. compute_logits keeps the full
@@ -70,6 +70,12 @@ def _attach_draft_vocab(model: nn.Module) -> None:
                 raise ValueError("Missing two-dimensional draft head")
             if getattr(head, "shard_indices", None) is None:
                 raise ValueError("Missing vocabulary shard metadata")
+            shard = head.shard_indices
+            start = int(shard.org_vocab_start_index)
+            end = int(shard.org_vocab_end_index)
+            tp_size = int(head.tp_size)
+            if tp_size != group.world_size or start < 0 or end <= start or end - start > head_weight.shape[0]:
+                raise ValueError("Invalid vocabulary shard bounds or TP size")
             if getattr(model.logits_processor, "scale", 1.0) <= 0:
                 raise ValueError("Non-positive logit scale")
             if head_weight.dtype not in (torch.bfloat16, torch.float16, torch.float32):
@@ -79,18 +85,25 @@ def _attach_draft_vocab(model: nn.Module) -> None:
             vocabulary = int(getattr(head, "org_vocab_size", head_weight.shape[0]))
             if not validated_ids or len(validated_ids) >= vocabulary or min(validated_ids) < 0 or max(validated_ids) >= vocabulary:
                 raise ValueError("Invalid draft vocabulary ids")
+            if end > vocabulary:
+                raise ValueError("Shard exceeds the original vocabulary")
             state = {"ok": True, "enabled": True, "vocabulary": vocabulary,
                      "ids_hash": hashlib.sha256(str(validated_ids).encode()).hexdigest(),
                      "width": int(head_weight.shape[1]), "dtype": str(head_weight.dtype),
-                     "balance": os.environ.get("VLLM_MTP_DRAFT_VOCAB_BALANCE", "") not in ("", "0")}
+                     "balance": os.environ.get("VLLM_MTP_DRAFT_VOCAB_BALANCE", "") not in ("", "0"),
+                     "shard": [start, end]}
     except Exception as exc:
         state = {"ok": False, "error": type(exc).__name__}
     states = [None] * group.world_size
     torch.distributed.all_gather_object(states, state, group=group.cpu_group)
-    if not all(item.get("ok") for item in states) or any(item != states[0] for item in states):
+    shared = [{k: v for k, v in item.items() if k != "shard"} for item in states]
+    if not all(item.get("ok") for item in states) or any(item != shared[0] for item in shared):
         raise RuntimeError("MTP vocabulary preflight disagreed across ranks: " + str(states))
     if not state["enabled"]:
         return
+    bounds = sorted(item["shard"] for item in states)
+    if bounds[0][0] != 0 or bounds[-1][1] != vocabulary or any(a[1] != b[0] for a, b in zip(bounds, bounds[1:])):
+        raise RuntimeError("MTP vocabulary shards do not partition the original vocabulary")
     # Reuse validated values instead of reopening the file after agreement.
     lm_head = head
     weight = head_weight
@@ -99,22 +112,22 @@ def _attach_draft_vocab(model: nn.Module) -> None:
     ids = validated_ids
 
     # Keep only the ids this rank actually owns, as local row offsets.
-    start = int(shard.org_vocab_start_index)
-    end = int(shard.org_vocab_end_index)
     local_ids = [i for i in ids if start <= i < end]
-    rows = torch.tensor([i - start for i in local_ids], dtype=torch.long,
-                        device=weight.device)
-    model.register_buffer(
-        "_draft_lm_head_weight",
-        weight.data.index_select(0, rows).contiguous(),
-        persistent=False,
-    )
-    model.register_buffer(
-        "_draft_id_to_target_id",
-        torch.tensor(local_ids, dtype=torch.long, device=weight.device),
-        persistent=False,
-    )
-    tp_size = int(getattr(lm_head, "tp_size", 1))
+    allocated = {"ok": False}
+    try:
+        rows = torch.tensor([i - start for i in local_ids], dtype=torch.long,
+                            device=weight.device)
+        draft_weight = weight.data.index_select(0, rows).contiguous()
+        draft_ids = torch.tensor(local_ids, dtype=torch.long, device=weight.device)
+        model.register_buffer("_draft_lm_head_weight", draft_weight, persistent=False)
+        model.register_buffer("_draft_id_to_target_id", draft_ids, persistent=False)
+        allocated = {"ok": True}
+    except Exception as exc:
+        allocated = {"ok": False, "error": type(exc).__name__}
+    allocations = [None] * group.world_size
+    torch.distributed.all_gather_object(allocations, allocated, group=group.cpu_group)
+    if not all(item["ok"] for item in allocations):
+        raise RuntimeError("MTP draft slice allocation failed on a rank: " + str(allocations))
 
     # Optional draft-head STORAGE balancing (VLLM_MTP_DRAFT_VOCAB_BALANCE=1).
     #
