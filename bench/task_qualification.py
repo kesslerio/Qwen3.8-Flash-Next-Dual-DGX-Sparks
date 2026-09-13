@@ -115,21 +115,25 @@ def main():
     p.add_argument('--profile',required=True);p.add_argument('--repeats',type=int,default=3);p.add_argument('--concurrencies',default='1,3')
     p.add_argument('--temperature',type=float,default=0)
     p.add_argument('--tool-budget',type=int,default=2)
+    p.add_argument('--cases',help='Comma-separated fixed case IDs for a focused recovery or compatibility screen')
     p.add_argument('--context-fixtures',type=Path,help='Private fixed repository background: context-32000.txt and context-128000.txt')
     a=p.parse_args();os.umask(0o077)
     if not 2 <= a.tool_budget <= 8:p.error('tool budget must be 2..8')
+    requested=a.cases.split(',') if a.cases else [case['id'] for case in CASES]
+    if len(set(requested))!=len(requested) or set(requested)-{case['id'] for case in CASES}:p.error('unknown or duplicate case IDs')
+    cases=[case for case in CASES if case['id'] in requested]
     backgrounds = {size:(a.context_fixtures/f'context-{size}.txt').read_text() for size in (32000,128000)} if a.context_fixtures else {}
     directory=a.records/(time.strftime('%Y%m%dT%H%M%S',time.gmtime())+'-'+a.profile+'-tasks-'+uuid.uuid4().hex[:8]);directory.mkdir(parents=True)
     for name in ('task_qualification.py','qualification.py'):
         (directory/name).write_bytes(Path(__file__).with_name(name).read_bytes())
-    (directory/'manifest.json').write_text(json.dumps({'profile':a.profile,'suite':'tasks','fixtures_sha256':digest({'cases':CASES,'files':FILES}),'repeats':a.repeats,'concurrencies':a.concurrencies,'temperature':a.temperature,'tool_budget':a.tool_budget,'background_sha256':{size:digest(text) for size,text in backgrounds.items()}},indent=2))
+    (directory/'manifest.json').write_text(json.dumps({'profile':a.profile,'suite':'tasks','fixtures_sha256':digest({'cases':cases,'files':FILES}),'case_ids':[case['id'] for case in cases],'repeats':a.repeats,'concurrencies':a.concurrencies,'temperature':a.temperature,'tool_budget':a.tool_budget,'background_sha256':{size:digest(text) for size,text in backgrounds.items()}},indent=2))
     print('RUN_DIRECTORY='+str(directory),flush=True)
     for repeat in range(a.repeats):
         for c in map(int,a.concurrencies.split(',')):
             before=idle(a.base)
             append(directory/'events.jsonl',{'event':'wave_start','repeat':repeat,'concurrency':c,'before':before})
             with concurrent.futures.ThreadPoolExecutor(max_workers=c) as pool:
-                futures=[pool.submit(task,a.base,case,a.temperature,a.tool_budget,backgrounds.get(128000 if case['kind']=='synthesis' else 32000)) for case in CASES]
+                futures=[pool.submit(task,a.base,case,a.temperature,a.tool_budget,backgrounds.get(128000 if case['kind']=='synthesis' else 32000)) for case in cases]
                 rows=[]
                 for future in concurrent.futures.as_completed(futures):
                     row=future.result();rows.append(row)
@@ -137,8 +141,9 @@ def main():
             after=idle(a.base)
             total=sum((r['usage'] or {}).get('completion_tokens',0) for t in rows for r in t['requests'])
             delta=after['vllm:generation_tokens_total']-before['vllm:generation_tokens_total']
-            valid=delta==total and all(not r.get('error') for t in rows for r in t['requests'])
-            result={'event':'task_wave','repeat':repeat,'concurrency':c,'valid':valid,'generation_counter_delta':delta,'completion_tokens':total,'passed':sum(t['passed'] for t in rows),'total':len(rows),'tasks':rows}
+            preemptions=after['vllm:num_preemptions_total']-before['vllm:num_preemptions_total']
+            valid=delta==total and preemptions==0 and all(not r.get('error') for t in rows for r in t['requests'])
+            result={'event':'task_wave','repeat':repeat,'concurrency':c,'valid':valid,'generation_counter_delta':delta,'completion_tokens':total,'preemption_delta':preemptions,'after':after,'passed':sum(t['passed'] for t in rows),'total':len(rows),'tasks':rows}
             append(directory/'events.jsonl',result);print(json.dumps({k:v for k,v in result.items() if k!='tasks'}),flush=True)
             if not valid:
                 append(directory/'events.jsonl',{'event':'run_finish','status':'invalid'})
