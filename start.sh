@@ -241,7 +241,7 @@ if [[ -n "${MODEL_REVISION:-}" ]]; then
     [[ -f "$PLE_CONFIG_DIR/config.json" ]] || err "Pinned snapshot missing: $MODEL_REVISION"
     if [[ -n "${QWEN_PROFILE:-}" ]]; then
         python3 "$SCRIPT_DIR/deploy/release_preflight.py" \
-            "$SCRIPT_DIR/deploy/profiles/nvfp4-manifest.json" "$PLE_CONFIG_DIR"
+            "${QWEN_MODEL_MANIFEST:-$SCRIPT_DIR/deploy/profiles/nvfp4-manifest.json}" "$PLE_CONFIG_DIR"
     fi
 fi
 if [[ ! -f "$PLE_CONFIG_DIR/config.json" ]]; then
@@ -384,8 +384,8 @@ extract_from_image() {   # extract_from_image <container path> <host dest>
 if $DO_LAUNCH && [[ "$FP8_DENSE" == "true" ]]; then
     info "=== Step 4c: FP8-dense overlay ==="
     OV="$SCRIPT_DIR/files/overlay"
-    [[ -f "$OV/modelopt.py" ]] || python3 "$OV/apply_patches.py"
-    add_overlay "$OV/modelopt.py"        "$VLLM_PKG/model_executor/layers/quantization/modelopt.py"
+    IMAGE="$IMAGE" python3 "$OV/apply_patches.py" --force
+    # modelopt is stacked onto the always-mounted MXFP8/block-MoE overlay below.
     add_overlay "$OV/model.py"           "$VLLM_PKG/models/qwen3_8_flash_next/nvidia/model.py"
     add_overlay "$OV/hyperconnection.py" "$VLLM_PKG/models/qwen3_8_flash_next/nvidia/hyperconnection.py"
     add_overlay "$OV/mtp.py"             "$VLLM_PKG/models/qwen3_8_flash_next/nvidia/mtp.py"
@@ -615,6 +615,9 @@ if $DO_LAUNCH; then
     # Stacks on top: adds the FP8_BLOCK_SCALES routed-expert branch that neither
     # this image nor upstream vLLM has, which is what MTP needs on this checkpoint.
     python3 "$SCRIPT_DIR/files/patch_modelopt_fp8_block_moe.py"
+    if [[ "$FP8_DENSE" == "true" ]]; then
+        python3 "$SCRIPT_DIR/files/stack_modelopt_fp8dense.py" "$SCRIPT_DIR"
+    fi
     ok "MXFP8 fallback patch ready: $PATCHED_MODELOPT"
     HEAD_MODELOPT_MOUNT="-v $PATCHED_MODELOPT:$MODEL_OPT_PKG:ro"
     WORKER_MODELOPT_MOUNT="-v /tmp/modelopt_patched.py:$MODEL_OPT_PKG:ro"
@@ -636,6 +639,9 @@ if $DO_LAUNCH; then
     fi
     VLLM_ARGS+=("--tensor-parallel-size" "$TENSOR_PARALLEL_SIZE")
     VLLM_ARGS+=("--gpu-memory-utilization" "$GPU_MEMORY_UTILIZATION")
+    if [[ -n "${KV_CACHE_MEMORY_BYTES:-}" ]]; then
+        VLLM_ARGS+=("--kv-cache-memory-bytes" "$KV_CACHE_MEMORY_BYTES")
+    fi
     VLLM_ARGS+=("--max-num-seqs" "$MAX_NUM_SEQS")
     VLLM_ARGS+=("--max-num-batched-tokens" "$MAX_NUM_BATCHED_TOKENS")
     VLLM_ARGS+=("--max-model-len" "$MAX_MODEL_LEN")
@@ -659,7 +665,9 @@ if $DO_LAUNCH; then
 
     # JSON args: use printf to build properly quoted strings for the heredoc
     if [[ "$MTP_NUM_SPECULATIVE_TOKENS" -gt 0 ]]; then
-        if [[ -n "$MTP_DRAFT_VOCAB" ]]; then
+        if [[ -n "${SPEC_CONFIG_JSON:-}" ]]; then
+            VLLM_ARGS+=("--speculative-config" "$(python3 -c 'import json,shlex,sys; print(shlex.quote(json.dumps(json.loads(sys.argv[1]),separators=(",",":"))))' "$SPEC_CONFIG_JSON")")
+        elif [[ -n "$MTP_DRAFT_VOCAB" ]]; then
             # get_top_tokens (added by patch_mtp_draft_vocab.py) is only reached
             # through this flag; it also cuts the draft all-gather from
             # O(vocab_size) to O(2*tp_size) per token.
@@ -670,6 +678,9 @@ if $DO_LAUNCH; then
     fi
 
     VLLM_ARGS+=("--compilation-config" "$(printf "'{\"mode\":0,\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}'")")
+    if [[ -n "${QWEN_ASYNC_SCHEDULING_ARG:-}" ]]; then
+        VLLM_ARGS+=("$QWEN_ASYNC_SCHEDULING_ARG")
+    fi
 
     # hf-overrides: ONE merged payload, nested under "text_config".
     # vLLM's ModelConfig._apply_dict_overrides only recurses into keys that are
@@ -708,6 +719,7 @@ print(json.dumps({"text_config": tc}, separators=(",", ":")) if tc else "")
     # values already carry their own single quotes (see printf above).
     VLLM_ARGS_STR="${VLLM_ARGS[*]}"
     OVERLAY_ENV_STR="${OVERLAY_ENV[*]:-}"
+    OVERLAY_ENV_STR+=" ${QWEN_EXTRA_ENV_ARGS:-}"
 
     # Build docker run args (base, without node-specific VLLM_HOST_IP)
     DOCKER_ARGS=()
