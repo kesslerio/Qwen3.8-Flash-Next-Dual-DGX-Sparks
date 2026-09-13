@@ -144,6 +144,44 @@ Notes when it is on:
 - `./check-weights.sh` follows `NFS_SHARE`: it verifies the worker's local copy by default, or the
   NFS volume when sharing is on.
 
+## Native qualification profiles
+
+For the John/Ofus campaign, the existing `model-cluster.service` owns deployment.
+Do not launch a second cluster owner. Its explicit environment selects
+`QWEN_PROFILE=nvfp4-native` and an absolute `QWEN_TUNING_FILE` pointing to a
+committed JSON profile in `deploy/experiments/`. Precedence is `.env`, then the
+pinned named profile, then the validated experiment. Thus a stale `.env` model
+entry cannot override the selected native checkpoint.
+
+`files/tuning_config.py` validates and shell-quotes these experiment fields:
+
+| Field | Purpose / limits |
+| --- | --- |
+| `id` | Non-secret deployment identity, also included in both-rank metadata |
+| `kv_cache_memory_bytes` | Explicit 16–40 billion-byte pool; omit for the baseline allocation |
+| `max_num_batched_tokens` | 2048–8192 prefill budget |
+| `max_num_seqs` | 1–8 admitted sequences; omitted uses the native profile's six |
+| `mtp_tokens` | 0–4 speculative tokens; omitted uses three |
+| `draft_sample_method` | `greedy` or `probabilistic`; reduced vocabulary requires greedy |
+| `index_share_for_mtp_iteration` | Optional boolean; a separate unqualified experiment |
+| `async_scheduling` | Optional boolean; do not claim a gain from enabling an already-enabled default |
+| `draft_vocab` | Existing absolute corpus-ranked token-ID file; full target head stays unchanged |
+| `extra_env` | Non-secret `VLLM_*` tuning controls forwarded to both ranks; never store credentials here |
+| `derived_checkpoint` | Separate model ID, immutable revision, verified inventory and quantization kind |
+
+Storage balancing is `extra_env.VLLM_MTP_DRAFT_VOCAB_BALANCE="1"`; it preserves
+the vocabulary set while redistributing rows. The committed 32K list originates
+from upstream PR #45's reported corpus; that corpus is not included, so the list
+is pinned by SHA256 but cannot be regenerated from this repository alone.
+
+Compilation stays at mode 0 / `FULL_DECODE_ONLY`, and QSA stays stock. This branch
+does not import upstream's arbitrary `VLLM_EXTRA_ENV` channel, QSA stacker, or
+FP8-dense/reduced-vocabulary stacker. Combining target quantization and reduced
+vocabulary is explicitly rejected. Successful configuration parsing is not proof
+that a kernel setting engaged: record both-rank arguments, environment, overlay
+hashes and actual backend logs, then qualify the workload. See the campaign
+[review audit](https://github.com/kesslerio/spark-john-ofus-management/blob/perf/qwen-qualification/experiments/2026-09-12-qwen/upstream-review-audit.md).
+
 ## .env Reference
 
 `sample` = value in `.env.sample` · `live` = value in the `.env` on this box, which produced
@@ -182,8 +220,9 @@ every measurement in this README.
 | `MASTER_PORT` | `50000` | `50000` | Distributed coordination port |
 | `NFS_SHARE` | `false` | `false` | `true` → share the head HF cache over NFS instead of rsyncing a worker copy ([details](#nfs-weight-sharing-optional)) |
 | `NFS_SERVER_IP` | *(unset → `IFACE` IPv4)* | *(unset → `10.0.22.1`)* | Head ConnectX address that exports the HF cache. Only used when `NFS_SHARE=true`. Do **not** use the `10.0.0.1` loopback alias |
-| `EXTRA_VLLM_ARGS` / `EXTRA_DOCKER_ARGS` | unset | unset | Escape hatches (`EXTRA_VLLM_ARGS` is appended last) |
-| `HF_TOKEN` | unset | unset | Required for `ABLIT=1` (gated Hugging Face repo). Environment wins over `.env` |
+| `EXTRA_VLLM_ARGS` | unset | unset | Appended to the serving arguments; native qualification uses validated profiles instead |
+| `EXTRA_DOCKER_ARGS` | unset | unset | Legacy placeholder; not forwarded by the two-node launch path |
+| `HF_TOKEN` | unset | unset | Used for gated checkpoint downloads. Environment wins over `.env`; the two-node serving containers do not receive this legacy knob |
 
 > **KV cache dtype:** the default is now **`fp8`**, which needs `files/patch_qsa_fp8_kv.py` —
 > the stock QSA kernels declare `supported_kv_cache_dtypes = ["auto", "bfloat16"]` and raise
