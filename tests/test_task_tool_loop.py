@@ -2,6 +2,7 @@ import importlib.util
 import json
 from pathlib import Path
 import sys
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -19,6 +20,13 @@ def read_response():
 
 
 class ToolLoopTests(unittest.TestCase):
+    def test_valid_type_guard_is_executable(self):
+        code = "def candidate(usage):\n    if not isinstance(usage, dict): return None\n    a, b = usage.get('inputTokens'), usage.get('cacheReadTokens')\n    return None if a is None or b is None else a + b"
+        result = subprocess.run([sys.executable, '-I', '-c', runner.SANDBOX],
+            input=json.dumps({'code':code, 'tests':runner.CASES[4]['tests']}),
+            capture_output=True, text=True, timeout=3)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def run_case(self, responses, budget):
         payloads = []
 

@@ -40,7 +40,7 @@ TOOL = {'type':'function','function':{'name':'read_file','description':'Read a r
 SANDBOX = '''
 import ast,json,sys
 d=json.load(sys.stdin);code=d['code'];tree=ast.parse(code)
-allowed_calls={'candidate','len','range','sum','min','max','list','dict','sorted','enumerate','zip','bool'}
+allowed_calls={'candidate','len','range','sum','min','max','list','dict','sorted','enumerate','zip','bool','isinstance','int','float','str','tuple','set','abs','all','any'}
 for n in ast.walk(tree):
  if isinstance(n,(ast.Import,ast.ImportFrom,ast.ClassDef,ast.With,ast.AsyncFunctionDef,ast.Global,ast.Nonlocal,ast.Lambda)):
   raise ValueError('unsupported syntax')
