@@ -83,6 +83,8 @@ def request(base, payload, progress=None, retain_wire=False):
                 if data == b'[DONE]':
                     break
                 event = json.loads(data)
+                if event.get('id'):
+                    row['response_id'] = event['id']
                 if retain_wire:
                     row['wire_events'].append(event)
                 if event.get('error'):
