@@ -11,10 +11,11 @@ Type=notify
 NotifyAccess=main
 User=kesslerio
 Group=docker
-Environment=HOME=/home/kesslerio
-EnvironmentFile=/home/kesslerio/.config/qwen-cluster/active.env
-WorkingDirectory=/home/kesslerio/Qwen3.8-Flash-Next-Dual-DGX-Sparks
-ExecStart=/usr/bin/python3 /home/kesslerio/Qwen3.8-Flash-Next-Dual-DGX-Sparks/deploy/qwen_cluster_supervisor.py
+# `%h` resolves to the configured service user's home directory.
+Environment=HOME=%h
+EnvironmentFile=%h/.config/qwen-cluster/active.env
+WorkingDirectory=%h/Qwen3.8-Flash-Next-Dual-DGX-Sparks
+ExecStart=/usr/bin/python3 %h/Qwen3.8-Flash-Next-Dual-DGX-Sparks/deploy/qwen_cluster_supervisor.py
 Restart=on-failure
 RestartSec=300
 TimeoutStartSec=6600

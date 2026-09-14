@@ -1,6 +1,6 @@
 # John / Ofus deployment
 
-The canonical checkout is `/home/kesslerio/Qwen3.8-Flash-Next-Dual-DGX-Sparks` on john; ofus is its TP2 worker. Both ranks use john's existing read-only NFS export. Do not stop `dspark-nfs` as part of a model restart.
+The canonical checkout is the private recipe location recorded in the deployment inventory on the head node; the worker node is its TP2 peer. Both ranks use the head node's existing read-only NFS export. Do not stop `dspark-nfs` as part of a model restart.
 
 ## Profiles and immutable inputs
 
@@ -10,7 +10,7 @@ Use `QWEN_PROFILE=nvfp4-native` for qualification (262144 context, six active se
 
 ## Service ownership
 
-The `deploy/systemd/qwen-vllm.service` runs a persistent Python supervisor. Its EnvironmentFile is `/home/kesslerio/.config/qwen-cluster/active.env`, containing `QWEN_PROFILE=nvfp4-native` or `nvfp4-long` and optionally `QWEN_MTP_TOKENS`. The existing `.env` retains network and host settings.
+The `deploy/systemd/qwen-vllm.service` runs a persistent Python supervisor. Its EnvironmentFile is the host-local `active.env` path recorded in the deployment inventory, containing `QWEN_PROFILE=nvfp4-native` or `nvfp4-long` and optionally `QWEN_MTP_TOKENS`. The existing `.env` retains network and host settings.
 
 The supervisor owns worker-first startup, model-specific readiness, three startup/recovery attempts per lifetime, and intentional stop. Each attempt permits 300 seconds for worker reachability and has a 1800-second load deadline; the enclosing unit allows all attempts plus backoff. `Restart=no` prevents an outer infinite retry loop. Check `systemctl status qwen-vllm` and `~/.local/state/qwen-cluster/status.json`; API timeouts alone do not restart live ranks. After exhaustion, repair the cause and explicitly start the unit again.
 

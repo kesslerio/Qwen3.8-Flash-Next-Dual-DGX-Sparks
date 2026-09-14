@@ -13,8 +13,8 @@ as `/etc/systemd/system/qwen-vllm.service.d/20-recovery.conf`, run
 These operations do not restart an active cluster. New installations can use
 the base unit, which contains the same recovery policy.
 
-The service reads `/home/kesslerio/.config/qwen-cluster/active.env`; that file
-selects the recipe environment/profile. Model identity and API port are read
+The service reads the host-local `active.env` path recorded in the deployment
+inventory; that file selects the recipe environment/profile. Model identity and API port are read
 from the selected configuration rather than hardcoded in the supervisor.
 To switch compatible models, update the selected configuration and restart
 this same service during a suitable interruption window. Do not enable a

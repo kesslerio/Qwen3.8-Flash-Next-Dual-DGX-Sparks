@@ -7,15 +7,16 @@ Requires=docker.service
 Type=simple
 User=kesslerio
 Group=docker
-Environment=HOME=/home/kesslerio
+# `%h` resolves to the configured service user's home directory.
+Environment=HOME=%h
 UMask=0077
-ExecStart=/usr/bin/python3 /home/kesslerio/Qwen3.8-Flash-Next-Dual-DGX-Sparks/deploy/request_history.py
+ExecStart=/usr/bin/python3 %h/Qwen3.8-Flash-Next-Dual-DGX-Sparks/deploy/request_history.py
 Restart=on-failure
 RestartSec=10
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/kesslerio/.local/state/qwen-cluster
+ReadWritePaths=%h/.local/state/qwen-cluster
 
 [Install]
 WantedBy=multi-user.target
